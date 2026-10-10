@@ -1,0 +1,55 @@
+{
+  "name": "dsh-restart-autostart",
+  "version": "0.1.0",
+  "description": "在 DSH 网页版「设置 → 通用」加入进程控制行：手动重启 dsh web 宿主进程，以及「跟随系统启动」勾选框（写入 macOS launchd / Linux systemd / Windows 服务自启条目，开机拉起并在崩溃后自动重启）。",
+  "icon": "icon.svg",
+  "type": "module",
+  "main": "lib/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/felixpu/dsh-restart-autostart.git"
+  },
+  "homepage": "https://github.com/felixpu/dsh-restart-autostart#readme",
+  "bugs": {
+    "url": "https://github.com/felixpu/dsh-restart-autostart/issues"
+  },
+  "author": "felixpu",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client",
+    "cordis.patch.yml",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "restart",
+    "autostart",
+    "daemon",
+    "guard"
+  ],
+  "license": "MIT"
+}

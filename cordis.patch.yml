@@ -1,0 +1,24 @@
+# dsh-restart-autostart 组合包补丁：把进程控制插件行插入 profile。
+#
+# 本包由 dsh-restart-button 与 dsh-autostart 合并而来，原名 dsh-restart；
+# 因 npm 上 `dsh-restart` 已被第三方占用（anweat，0.1.3-alpha.5），
+# 自 2026-10-09 起改名为 dsh-restart-autostart，**运行时标识一并改名**
+# （路由 / 配置目录 / 自启条目，见下），旧版本不会与本版本抢端口或抢条目。
+#
+# 宿主半身提供两组路由，浏览器半身把两行挂进「设置 → 通用」：
+#
+#   manual/ 手动重启                  guard/ 重启守护
+#   GET  /dsh-restart-autostart/health        GET  /dsh-restart-autostart/autostart/status
+#   POST /dsh-restart-autostart/restart       POST /dsh-restart-autostart/autostart/enable
+#                                             POST /dsh-restart-autostart/autostart/disable
+#
+# 端口与配置目录说明：
+#   守护部分默认作用于「当前宿主进程所使用的端口」，因此不会与既有生产守护冲突。
+#   自启条目、日志、状态文件统一落在 ~/.dsh-restart-autostart/ 下，与 ~/.dsh/ 完全分离。
+#
+# ⚠️ 从旧名升级：旧版留下的 ~/.dsh-restart/ 目录与 launchd 条目
+#    com.dsh.restart.<port>（systemd 为 dsh-restart-<port>.service）**不会自动迁移**。
+#    升级后请重新勾选一次「跟随系统启动」，并手动清理旧条目与旧目录。
+- insert:
+    - id: dsh-restart-autostart
+      name: 'dsh-restart-autostart'
