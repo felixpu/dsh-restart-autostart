@@ -11,7 +11,7 @@
 ## 安装
 
 ```sh
-dsh plugin --profile web add dsh-restart-autostart
+dsh plugin --profile web add github:felixpu/dsh-restart-autostart
 ```
 
 安装后重启宿主进程。
