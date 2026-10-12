@@ -49,6 +49,26 @@ dsh plugin --profile web add github:felixpu/dsh-restart-autostart
 
 > Linux 上依赖 systemd 用户实例的 **linger** 才能在无人登录时拉起；非 systemd 发行版（如 Alpine 用 OpenRC）不可用。
 
+## 启动互斥：为什么两个实例不会抢端口
+
+**手动重启**与**守护**是两条独立通道，都能拉起宿主。宿主被 kill 后到新宿主 `listen`
+之间约有 **10 秒空窗**（新宿主在加载整棵插件树），这段空窗里端口是空的 —— 两个通道
+会双双认定「现在就我，我上」，各自加载一遍插件树，最后只有一个能绑上端口，另一方报
+`EADDRINUSE` 退出。日志里看着像随机故障，其实是必然。
+
+解法是一把**「正在启动」跨进程锁**（`logs/starting-<port>.lock`，内容为纯十进制 pid）：
+
+1. 手动重启脚本在**动手 kill 之前**先把自己写进锁；
+2. 拉起新宿主后，立刻把锁改写成**新宿主的 pid**（脚本随即退出，新宿主才活得够久）；
+3. 守护每次启动前读锁：**持有者进程还活着**就让路，等对方出结果；
+   持有者已不存在 → 孤儿锁，随手清掉，自己接管启动。
+
+判据是「锁里记的 pid 还活着没有」，**不是等待时长** —— 进程一死锁即失效，永远不会
+留下需要人工清理的残锁，也不需要「等满 N 秒就假定安全」这类靠不住的启发式。
+
+> 两条通道各自「正确执行」却互相踩踏，是这类故障最难查的地方：没有谁写错了代码。
+> 让它们对同一件事（谁在启动）有共同认知，比在任一方加延迟或重试都可靠。
+
 ## 数据落盘位置
 
 全部落在 `~/.dsh-restart-autostart/`，与 `~/.dsh/` 完全分离：
@@ -57,6 +77,7 @@ dsh plugin --profile web add github:felixpu/dsh-restart-autostart
 |---|---|
 | `~/.dsh-restart-autostart/guard.mjs` | 守护运行体（稳定落点） |
 | `~/.dsh-restart-autostart/logs/` | 日志与计数 |
+| `~/.dsh-restart-autostart/logs/starting-<port>.lock` | 启动互斥锁（持有者为存活进程时有效，自动失效无需清理） |
 
 守护脚本被安装到 `~/.dsh-restart-autostart/guard.mjs` 而非包内路径 —— 因为包目录会随 pnpm 重装、换 profile、`link:` realpath 而漂移。
 

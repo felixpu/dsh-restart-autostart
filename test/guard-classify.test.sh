@@ -1,10 +1,15 @@
 #!/bin/sh
 # dsh-restart-autostart 守护 · 退出分类回归测试
 #
-# 跑法：  sh packages/dsh-restart-autostart/test/guard-classify.test.sh
+# 跑法：  DSH_RESTART_GUARD="$PWD/lib/guard/guard.js" sh test/guard-classify.test.sh
 # 依赖：  node 在 PATH；被测运行体默认 ~/.dsh-restart-autostart/guard.mjs（可用 DSH_RESTART_GUARD 覆盖）
-# 影响面：只在测试端口上动 ~/.dsh-restart-autostart/logs/autostart-<port>.{log,count}（跑完删掉）；
-#         不碰真 dsh、不碰 ~/.dsh、不碰线上端口。整轮约 70s（slow 那条要等 65s）。
+# 影响面：只在测试端口上动 ~/.dsh-restart-autostart/logs/ 下的
+#         autostart-<port>.{log,count} 与 starting-<port>.lock（跑完删掉）；
+#         不碰真 dsh、不碰 ~/.dsh、不碰线上端口。整轮约 90s（slow 那条要等 65s）。
+#
+# ⚠️ 测试端口必须**空闲**。端口被占时守护会转入待命守候（那是正确语义），而 check() 是
+#    同步等它退出的 —— 整轮就此卡死，且看不出是被外部占用所致。跑之前先确认：
+#        lsof -nP -iTCP:${GTEST_PORT:-3099} -sTCP:LISTEN
 #
 # 原理：guard.js 的 locateDsh() 按
 #         dirname(process.execPath)/../lib/node_modules/@deepseek-ai/dsh/lib/bin.js
@@ -24,6 +29,9 @@ pass=0
 fail=0
 STANDBY_PID=""
 SQUAT_PID=""
+DEFER_PID=""
+HOLDER_PID=""
+LOCK="$HOME/.dsh-restart-autostart/logs/starting-$PORT.lock"
 
 # 防呆：这两个端口上跑着真服务，跑测试会把它的日志与计数覆盖掉。
 case "$PORT" in
@@ -36,6 +44,9 @@ esac
 cleanup() {
   [ -n "$STANDBY_PID" ] && kill "$STANDBY_PID" 2>/dev/null
   [ -n "$SQUAT_PID" ] && kill "$SQUAT_PID" 2>/dev/null
+  [ -n "$DEFER_PID" ] && kill "$DEFER_PID" 2>/dev/null
+  [ -n "$HOLDER_PID" ] && kill "$HOLDER_PID" 2>/dev/null
+  rm -f "$LOCK"
   rm -rf "$ROOT"
   rm -f "$LOG" "$CNT"
 }
@@ -69,7 +80,7 @@ check() {
     pass=$((pass + 1))
   else
     echo "FAIL  ${name}"
-    echo "      期望：计数 ${want_cnt}，日志含「$want_line」"
+    echo "      期望：计数 ${want_cnt}，日志含「${want_line}」"
     echo "      实际：计数 ${got_cnt}，日志尾两行如下"
     tail -2 "$LOG" | sed 's/^/        /'
     fail=$((fail + 1))
@@ -81,11 +92,41 @@ check "ready     起来了但非零退出" ready "曾成功启动，属运行期
 check "bootfail  插件树加载失败" bootfail "未成功启动，属启动失败" 3
 check "slow      65s 才落 token" slow "就绪标记晚于" 0
 
+# defer：另一通道正在启动（启动锁被**存活**进程持有）→ 守护必须让路，不得自己拉 dsh。
+#
+# 这是 2026-10-12 引入的启动互斥。宿主被 kill 到新宿主 listen 之间约有 10 秒空窗
+# （新宿主在加载插件树），守护与 manual 重启脚本会双双认定「现在就我，我上」，
+# 各加载一遍插件树后抢同一个端口，输的一方报 EADDRINUSE 退出 —— 看着像随机故障。
+#
+# 判据两条必须同时成立：① 日志出现「本轮让路」；② 本轮**没有**任何 fake-dsh 的输出。
+# 只验 ① 不够 —— 写下一句日志不等于行为正确，「压根没启动」才是让路的实质。
+printf '2' >"$CNT"
+: >"$LOG"
+"$NODE" -e "setTimeout(function(){process.exit(0)}, 30000)" &
+HOLDER_PID=$!
+printf '%s' "$HOLDER_PID" >"$LOCK"
+GTEST_SCENARIO=ready "$NODE" "$GUARD" --port "$PORT" >/dev/null 2>&1 &
+DEFER_PID=$!
+sleep 6
+kill "$DEFER_PID" 2>/dev/null
+DEFER_PID=""
+kill "$HOLDER_PID" 2>/dev/null
+HOLDER_PID=""
+rm -f "$LOCK"
+if grep -qF "本轮让路" "$LOG" && ! grep -qF "dsh web: http://" "$LOG"; then
+  echo "PASS  defer     另一通道持锁启动时让路，未自行拉起 dsh"
+  pass=$((pass + 1))
+else
+  echo "FAIL  defer     守护没有让路，或仍自行拉起了 dsh"
+  tail -3 "$LOG" | sed 's/^/        /'
+  fail=$((fail + 1))
+fi
+
 # standby：端口先被占住。守护会永远守候，故起来后手动收掉，只验它有没有把
 # 「占用者可能不是我自己的 dsh」这个前提写进日志（这是 2026-09-26 补的可观测性）。
 printf '2' >"$CNT"
 : >"$LOG"
-node -e "const s=require('net').createServer();s.listen($PORT,'127.0.0.1');setTimeout(()=>process.exit(0),20000)" &
+"$NODE" -e "const s=require('net').createServer();s.listen($PORT,'127.0.0.1');setTimeout(()=>process.exit(0),20000)" &
 SQUAT_PID=$!
 sleep 1
 "$NODE" "$GUARD" --port "$PORT" >/dev/null 2>&1 &
