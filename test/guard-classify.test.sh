@@ -11,6 +11,11 @@
 #    同步等它退出的 —— 整轮就此卡死，且看不出是被外部占用所致。跑之前先确认：
 #        lsof -nP -iTCP:${GTEST_PORT:-3099} -sTCP:LISTEN
 #
+# ⚠️ 端口上还**不能有遗留的守卫进程**在跑。守卫会不断重启 fake-dsh 并读写
+#    autostart-<port>.count，与 check() 抢同一个计数文件，表现为随机 FAIL。
+#    实测踩过：一个没被 kill 干净的守卫把 race 的计数从 2 改成了 0，而日志里
+#    那行期望的文案明明写出来了 —— 只看日志会误判成判据错了。
+#
 # 原理：guard.js 的 locateDsh() 按
 #         dirname(process.execPath)/../lib/node_modules/@deepseek-ai/dsh/lib/bin.js
 #       推导 dsh 入口。所以只要用一个**硬链接到真 node** 的副本去跑 guard，
@@ -81,8 +86,8 @@ check() {
   else
     echo "FAIL  ${name}"
     echo "      期望：计数 ${want_cnt}，日志含「${want_line}」"
-    echo "      实际：计数 ${got_cnt}，日志尾两行如下"
-    tail -2 "$LOG" | sed 's/^/        /'
+    echo "      实际：计数 ${got_cnt}，日志全文如下"
+    sed 's/^/        /' "$LOG"
     fail=$((fail + 1))
   fi
 }
