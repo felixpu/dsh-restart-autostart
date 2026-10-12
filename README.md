@@ -106,6 +106,24 @@ DSH_RESTART_GUARD="$PWD/lib/guard/guard.js" bash test/guard-classify.test.sh
 > 测试需指定 `DSH_RESTART_GUARD` 指到包内守护脚本；未指定时默认读
 > `~/.dsh-restart-autostart/guard.mjs`（需先在设置里启用过一次自启）。
 
+## 展示元数据（locale）
+
+`locale/en.json` 与 `locale/zh.json` 提供**插件展示元数据**（`meta.title` / `meta.description`），
+Plugin Manager 与设置页**无需激活插件**即可读取，用于显示本地化的插件名与说明。
+这与运行时 UI 文案（客户端 `ctx.locale.register`）是两套东西。
+
+```json
+{ "meta": { "title": "…", "description": "…" } }
+```
+
+⚠️ 两个容易漏的点（漏任一个都会**静默失效**，不报错）：
+
+1. **必须在 `package.json` 的 `exports` 里导出 `./locale/*.json`** —— 宿主经 Node 模块解析器
+   读取该资源，未导出的子路径会得到 `ERR_PACKAGE_PATH_NOT_EXPORTED`，被当作「没有 locale」跳过。
+2. **`files` 需包含 `locale`** —— 否则 `pnpm pack` / `npm publish` 的产物里不会带上它。
+
+`icon.svg` 走顶层 `icon` 字段（相对路径），**不需要** `exports`。
+
 ## 客户端挂载点
 
 | 槽位 | 注册 id | 用途 | 排序 |

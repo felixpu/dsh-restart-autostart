@@ -22,13 +22,15 @@
     ".": "./lib/index.js",
     "./client": "./client/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
     "client",
     "cordis.patch.yml",
-    "icon.svg"
+    "icon.svg",
+    "locale"
   ],
   "dsh": {
     "bundle": {
