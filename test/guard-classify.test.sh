@@ -65,12 +65,12 @@ check() {
   GTEST_SCENARIO="$scen" GTEST_SLOW_MS="$SLOW_MS" "$NODE" "$GUARD" --port "$PORT" >/dev/null 2>&1
   got_cnt="$(cat "$CNT" 2>/dev/null)"
   if grep -qF "$want_line" "$LOG" && [ "$got_cnt" = "$want_cnt" ]; then
-    echo "PASS  $name（计数 2 → $got_cnt）"
+    echo "PASS  ${name}（计数 2 → ${got_cnt}）"
     pass=$((pass + 1))
   else
-    echo "FAIL  $name"
-    echo "      期望：计数 $want_cnt，日志含「$want_line」"
-    echo "      实际：计数 $got_cnt，日志尾两行如下"
+    echo "FAIL  ${name}"
+    echo "      期望：计数 ${want_cnt}，日志含「$want_line」"
+    echo "      实际：计数 ${got_cnt}，日志尾两行如下"
     tail -2 "$LOG" | sed 's/^/        /'
     fail=$((fail + 1))
   fi

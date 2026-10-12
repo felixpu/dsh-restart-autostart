@@ -1,9 +1,11 @@
 # dsh-restart-autostart
 
-在 DSH（DeepSeek Harness）网页版「**设置 → 通用**」加入进程控制行：
+给 DSH（DeepSeek Harness）网页版加入两处进程控制入口：
 
-- **手动重启**：一键重启 `dsh web` 宿主进程，重启后页面自动探测服务恢复
-- **跟随系统启动**：写入系统自启条目（macOS launchd / Linux systemd / Windows 服务），开机拉起，并在崩溃后自动重启
+- **手动重启**：设置面板**标题栏**上的红色「重启」按钮（紧挨「打开配置文件」左侧）。
+  任何设置分页都能点到它，不必滚动到「通用」页去找；重启后页面自动探测服务恢复。
+- **跟随系统启动**：「设置 → 通用」里的勾选框，写入系统自启条目
+  （macOS launchd / Linux systemd / Windows 服务），开机拉起，并在崩溃后自动重启
 
 > **关于包名**：本包是 `dsh-restart` 的重命名版本 —— npm 上 `dsh-restart`
 > 已被第三方占用（维护者 anweat），故更名为 `dsh-restart-autostart` 发布。
@@ -20,13 +22,20 @@ dsh plugin --profile web add github:felixpu/dsh-restart-autostart
 
 ### 手动重启
 
-设置 → 通用 → 进程控制 → 「立即重启」。
+1. 打开**设置**（任意分页都可以）。
+2. 点标题栏右侧、**「打开配置文件」左边**的红色「重启」按钮。
+3. 二次确认后开始重启：按钮下方出现进度浮层（正在停止旧服务 → 正在启动新服务 → 已恢复）。
 
 前端会轮询 `GET /dsh-restart-autostart/health` 判断服务是否恢复，因此重启过程无需手动刷新。
+
+> 按钮用 danger 配色是刻意的：重启会中断所有正在进行的会话与后台任务。
+> 失败或超时也会在同一个浮层里显示原因，并保持显示直到你手动关闭。
 
 ### 跟随系统启动
 
 设置 → 通用 → 勾选「跟随系统启动」。
+
+> 重启按钮搬到标题栏后，通用页这一行只剩自启开关，标题也随之改成「跟随系统启动」。
 
 勾选后会向当前平台注册自启条目：
 
@@ -99,9 +108,10 @@ DSH_RESTART_GUARD="$PWD/lib/guard/guard.js" bash test/guard-classify.test.sh
 
 ## 客户端挂载点
 
-| 槽位 | 用途 |
-|---|---|
-| `settings.general.item` | 「设置 → 通用」里的进程控制行 |
+| 槽位 | 注册 id | 用途 | 排序 |
+|---|---|---|---|---|
+| `settings.action` | `dsh-restart-autostart/restart` | 设置面板标题栏的重启按钮（所有分页共用） | `-10`（官方「打开配置文件」为 `0`，故排在它左侧）|
+| `settings.general.item` | `dsh-restart-autostart/autostart` | 「设置 → 通用」里的「跟随系统启动」行 | `90` |
 
 客户端 bundle 仅 `require` 平台种子表内的模块（`react`、`@deepseek-ai/dsh-client-ui-primitives`）。
 

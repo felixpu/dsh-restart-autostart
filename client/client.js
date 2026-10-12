@@ -22,27 +22,39 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 	 * try/catch 是防御：种子表若哪天变了，退化成「没有 tooltip」，而不是这一行白屏。
 	 */
 	let Tooltip = null;
+	let Button = null;
 	try {
 		const primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		Tooltip = typeof primitives.Tooltip === "function" ? primitives.Tooltip : null;
+		// 标题栏按钮要与官方「打开配置文件」同款（同一组件、同一尺寸、同一圆角），
+		// 只把颜色换成 danger。取不到就退化成自写 button（见 HeaderRestart）。
+		Button = typeof primitives.Button === "object" || typeof primitives.Button === "function"
+			? primitives.Button
+			: null;
 	} catch {
 		Tooltip = null;
+		Button = null;
 	}
 
 	/**
-	 * dsh-restart-autostart 浏览器半身 —— 「设置 → 通用」里的一行。
+	 * dsh-restart-autostart 浏览器半身 —— 设置面板标题栏的动作 + 「设置 → 通用」里的一行。
 	 *
 	 * 由 dsh-restart-autostart-button 与 dsh-autostart 合并而来（现名 dsh-restart-autostart），仍是两条独立功能线：
-	 *   ① 手动重启     —— 同源 POST /dsh-restart-autostart/restart
-	 *   ② 重启守护     —— /dsh-restart-autostart/autostart/{status,enable,disable}
+	 *   ① 手动重启     —— 标题栏按钮 + 确认弹窗，同源 POST /dsh-restart-autostart/restart
+	 *   ② 重启守护     —— 通用页那一行的勾选框，/dsh-restart-autostart/autostart/{status,enable,disable}
 	 *
-	 * 两者**合占一行**：自启开关挂在「重启服务」标题行的右端。它们同属「服务生命周期」，
-	 * 而合并的直接动机是省高度 —— 原先各占一行，自启那行光「说明 + 状态」就吃掉两行文字。
-	 * 之所以必须合并而不是调 CSS：`settings.general.item` 是**单列 flex、每项一棵独立
-	 * DOM 子树**，两个注册永远并不到一行。
+	 * 两者现在**分处两地**：
+	 *   ① 手动重启 —— 挂进设置面板的**全局标题栏**（槽 `settings.action`），
+	 *      紧挨官方「打开配置文件」左侧，位于关闭按钮之前。任何设置分页都能点它，
+	 *      不必再滚动「通用」页去找（这正是本次改动要解决的问题）。
+	 *   ② 自启开关 —— 留在「设置 → 通用」的那一行，标题改成它自己的名字。
 	 *
-	 * 说明与状态改由 tooltip 承载；只有**失败信息**仍内联显示 —— 操作失败往往要人动手
-	 * （例如 launchctl 不在登录域、要被叫去终端执行命令），藏进 tooltip 等于藏起来。
+	 * 之所以不放回 `settings.general.item` 并排：该槽是**单列 flex、每项一棵独立
+	 * DOM 子树**，两个注册永远并不到一行；而标题栏那一行是全局共用、位置固定的。
+	 *
+	 * 进度与错误改由标题栏按钮下方的浮层承载 —— 标题栏只有 54px 高，放不下行内文本。
+	 * 错误仍**必须可见**（例如 launchctl 不在登录域、要被叫去终端执行命令），
+	 * 藏进 tooltip 等于藏起来，故浮层在失败时保持显示、由用户手动关闭。
 	 */
 
 	/** 命名空间：文案与 locale 字典注册键，同时是模块加载器的 bundle id。 */
@@ -93,6 +105,7 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		stopping: "正在停止旧服务…",
 		starting: "正在启动新服务…",
 		failed: "重启请求失败：",
+		failedTip: "重启未能完成",
 		timeout: "服务未在预期时间内恢复，请手动刷新页面或检查终端日志。",
 		// ② 跟随系统启动
 		autoTitle: "跟随系统启动",
@@ -123,6 +136,7 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		stopping: "Stopping the old service…",
 		starting: "Starting the new service…",
 		failed: "Restart request failed: ",
+		failedTip: "Restart did not complete",
 		timeout: "The service did not come back in time. Refresh the page or check the terminal log.",
 		// ② 跟随系统启动
 		autoTitle: "Launch at system startup",
@@ -139,40 +153,53 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 	};
 
 	/**
-	 * 行样式：与通用设置其它行一致的排版。
+	 * 行样式：与通用设置其它行一致的排版，外加标题栏动作与进度浮层。
 	 *
-	 * 前缀 rstb- 同时服务两行（重启 + 自启），故只注入一份样式表；
-	 * 两行的差异通过 mod 类区分（竖排 vs 标题右侧控件）。
+	 * 前缀 rstb- 同时服务两处渲染（标题栏按钮 + 通用页自启行），故只注入一份样式表。
+	 *
+	 * ⚠️ 所有颜色/圆角/阴影一律走主题 token，且必须是【实报名单】里的名字
+	 * （用 cordis_inspect_query 的 client/Theme listTokens 核对过）——
+	 * 例如文字色是 --dsw-alias-label-primary 而不是 --dsw-alias-text-primary，
+	 * 后者根本不存在，只能靠 fallback 蒙对。写明 fallback 是为了主题缺失时仍可用。
 	 */
-	const CSS = ".rstb-row{display:flex;flex-direction:column;gap:4px;padding:12px 0;border-bottom:1px solid var(--dsw-alias-border-secondary,#e5e5e5)}" +
+	const CSS = ".rstb-row{display:flex;flex-direction:column;gap:4px;padding:12px 0;border-bottom:1px solid var(--dsw-alias-border-l2,#e5e5e5)}" +
 		".rstb-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}" +
 		".rstb-rowText{display:flex;flex-direction:column;gap:2px;min-width:0}" +
-		".rstb-title{font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-text-primary,inherit)}" +
-		".rstb-desc{font-size:12px;line-height:18px;color:var(--dsw-alias-text-tertiary,#8a8a8a)}" +
-		".rstb-controls{display:flex;align-items:center;gap:8px;margin-top:8px}" +
-		".rstb-btn{height:28px;padding:0 14px;border-radius:6px;border:1px solid transparent;font-size:12px;font-weight:600;line-height:18px;cursor:pointer;background:var(--dsw-alias-button-primary,#4f6ef7);color:#fff}" +
+		".rstb-title{font-size:13px;line-height:20px;font-weight:500;color:var(--dsw-alias-label-primary,inherit)}" +
+		".rstb-desc{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8a8a8a)}" +
+		".rstb-btn{height:28px;padding:0 14px;border-radius:6px;border:1px solid transparent;font-size:12px;font-weight:600;line-height:18px;cursor:pointer;background:var(--dsw-alias-button-primary-fill,#4f6ef7);color:#fff}" +
 		".rstb-btn:hover:not(:disabled){filter:brightness(1.08)}" +
 		".rstb-btn:disabled{opacity:.55;cursor:default}" +
-		".rstb-btnGhost{background:transparent;color:var(--dsw-alias-text-secondary,inherit);border-color:var(--dsw-alias-border-secondary,#e5e5e5)}" +
-		".rstb-btnGhost:hover:not(:disabled){background:var(--dsw-alias-bg-hover,#0000000d)}" +
-		".rstb-status{font-size:12px;line-height:18px;color:var(--dsw-alias-text-tertiary,#8a8a8a)}" +
-		".rstb-progress{display:flex;flex-direction:column;gap:6px;margin-top:10px}" +
-		".rstb-progressHead{display:flex;align-items:baseline;justify-content:space-between;gap:8px}" +
-		".rstb-progressLabel{font-size:12px;line-height:18px;color:var(--dsw-alias-text-secondary,inherit)}" +
-		".rstb-progressTime{font-size:11px;line-height:16px;color:var(--dsw-alias-text-tertiary,#8a8a8a);font-variant-numeric:tabular-nums}" +
-		".rstb-track{height:4px;border-radius:2px;background:var(--dsw-alias-bg-hover,#00000014);overflow:hidden}" +
-		".rstb-bar{height:100%;border-radius:2px;background:var(--dsw-alias-button-primary,#4f6ef7);transition:width .3s ease}" +
+		".rstb-btnGhost{background:transparent;color:var(--dsw-alias-label-secondary,inherit);border-color:var(--dsw-alias-border-l2,#e5e5e5)}" +
+		".rstb-btnGhost:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#0000000d)}" +
+		".rstb-btnSolidDanger{background:var(--dsw-alias-state-error-primary,#d1242f);color:var(--dsw-alias-label-primary-foreground,#fff)}" +
+		".rstb-btnSolidDanger:hover:not(:disabled){filter:brightness(1.08)}" +
+		".rstb-track{height:4px;border-radius:2px;background:var(--dsw-alias-interactive-bg-hover,#00000014);overflow:hidden}" +
+		".rstb-bar{height:100%;border-radius:2px;background:var(--dsw-alias-button-primary-fill,#4f6ef7);transition:width .3s ease}" +
 		".rstb-barDone{background:var(--dsw-alias-state-success-primary,#1a7f37)}" +
 		".rstb-error{font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#d1242f)}" +
 		".rstb-overlay{position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;background:#00000061}" +
-		".rstb-modal{width:440px;max-width:calc(100vw - 32px);background:var(--dsw-alias-bg-primary,#fff);border:1px solid var(--dsw-alias-border-secondary,#e5e5e5);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 12px 40px #0000003d}" +
-		".rstb-modalTitle{font-size:14px;font-weight:600;line-height:20px;color:var(--dsw-alias-text-primary,inherit)}" +
-		".rstb-modalBody{font-size:12px;line-height:18px;color:var(--dsw-alias-text-secondary,inherit)}" +
+		".rstb-modal{width:440px;max-width:calc(100vw - 32px);background:var(--dsw-alias-bg-layer-2,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e5e5);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 12px 40px #0000003d}" +
+		".rstb-modalTitle{font-size:14px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary,inherit)}" +
+		".rstb-modalBody{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,inherit)}" +
 		".rstb-modalActions{display:flex;justify-content:flex-end;gap:8px;margin-top:2px}" +
 		".rstb-switch{flex:none;display:flex;align-items:center;gap:8px}" +
-		".rstb-switchLabel{font-size:13px;line-height:20px;color:var(--dsw-alias-text-secondary,inherit);white-space:nowrap;user-select:none;cursor:default}" +
-		".rstb-box{width:16px;height:16px;accent-color:var(--dsw-alias-button-primary,#4f6ef7);cursor:pointer}" +
-		".rstb-box:disabled{cursor:default;opacity:.55}";
+		".rstb-box{width:16px;height:16px;accent-color:var(--dsw-alias-button-primary-fill,#4f6ef7);cursor:pointer}" +
+		".rstb-box:disabled{cursor:default;opacity:.55}" +
+		// ── 标题栏动作（重启按钮 + 进度浮层）────────────────────────────
+		// 双类选择器（.rstb-btnDanger.rstb-btnDanger）是为了压过平台 Button 的
+		// .outline 单类样式 —— 两份 CSS 的插入顺序不确定，只能靠特异性取胜。
+		".rstb-headerAction{position:relative;display:flex;align-items:center}" +
+		".rstb-btnDanger.rstb-btnDanger{color:var(--dsw-alias-state-error-primary,#d1242f);border-color:var(--dsw-alias-state-error-primary,#d1242f)}" +
+		".rstb-btnDanger.rstb-btnDanger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger,#d1242f1a)}" +
+		".rstb-btnDanger.rstb-btnDanger:disabled{color:var(--dsw-alias-state-error-primary,#d1242f);opacity:.55;cursor:default}" +
+		".rstb-flyout{position:absolute;top:calc(100% + 8px);right:0;z-index:5;width:240px;box-sizing:border-box;padding:10px 12px;border-radius:var(--dsw-radius-md,10px);background:var(--dsw-alias-bg-overlay,var(--dsw-alias-bg-layer-2,#fff));border:1px solid var(--dsw-alias-border-l1,#e5e5e5);box-shadow:var(--dsw-elevation-panel,0 8px 24px #00000026);display:flex;flex-direction:column;gap:6px}" +
+		".rstb-flyoutHead{display:flex;align-items:baseline;justify-content:space-between;gap:8px}" +
+		".rstb-flyoutLabel{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,inherit)}" +
+		".rstb-flyoutTime{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8a8a8a);font-variant-numeric:tabular-nums}" +
+		".rstb-flyoutError{font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#d1242f);word-break:break-word}" +
+		".rstb-flyoutClose{flex:none;height:18px;padding:0 4px;border:none;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-tertiary,#8a8a8a);font-size:12px;line-height:18px;cursor:pointer;font-family:inherit}" +
+		".rstb-flyoutClose:hover{background:var(--dsw-alias-interactive-bg-hover,#0000000d)}";
 
 	/** 注入一次本插件样式（按 tagId 去重，避免重复挂载时叠加）。 */
 	function installStyles() {
@@ -186,21 +213,20 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 	}
 
 	/**
-	 * ① 「重启服务」设置行。
+	 * 重启的状态机 —— 纯逻辑，不管排版。
 	 *
 	 * 三个状态：idle（可点击）→ confirming（二次确认）→ restarting（等待服务恢复）。
 	 * 重启会切断本页与宿主的连接，所以不能依赖重启请求本身的回包判断成功，
 	 * 只能轮询 /health 直到服务重新响应。
 	 *
-	 * 行内还挂着右端的「跟随系统启动」开关（见 {@link useAutostart}）—— 两者同属
-	 * 服务生命周期，合成一行可省掉整行高度。
-	 * @param props - 插槽 props：`t` 文案函数。
-	 * @returns 行元素树。
+	 * 从原来的 RestartRow 整体搬出来（逻辑逐字未改），只因渲染位置从「通用设置行」
+	 * 换到了「设置面板标题栏」—— 逻辑与排版分开后，两处渲染都好写。
+	 * @param t - 文案函数。
+	 * @returns 状态与动作；`request()` 打开确认弹窗，`confirm()` 真正发起重启。
 	 */
-	function RestartRow({ t }) {
+	function useRestart(t) {
 		const [confirming, setConfirming] = react.useState(false);
 		const [restarting, setRestarting] = react.useState(false);
-		const [status, setStatus] = react.useState("");
 		const [error, setError] = react.useState("");
 		// 重启进度：phase 为 stopping/starting/done，elapsed 为已等待毫秒数。
 		// 两者只服务于「让用户看见进度」，不参与成功与否的判定。
@@ -209,9 +235,6 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		// 组件卸载后停止轮询，避免对已消失的页面继续写 state。
 		const alive = react.useRef(true);
 		react.useEffect(() => () => { alive.current = false; }, []);
-
-		/** 右端自启开关的状态与动作（排版在本组件，逻辑在 hook 里）。 */
-		const auto = useAutostart(t);
 
 		/**
 		 * 等待服务恢复，并在过程中回报进度。
@@ -283,7 +306,6 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		const doRestart = react.useCallback(async () => {
 			setConfirming(false);
 			setError("");
-			setStatus(t("restarting"));
 			setPhase("stopping");
 			setElapsed(0);
 			setRestarting(true);
@@ -298,14 +320,12 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 					setRestarting(false);
 					setPhase("");
 					setElapsed(0);
-					setStatus("");
 					setError(t("failed") + "HTTP " + response.status);
 					return;
 				}
 			} catch {
 				// 连接可能在重启启动瞬间就断了，属预期路径，继续等待恢复。
 			}
-			setStatus(t("waiting"));
 			// 进度回报纯属 UI 展示：节流到 100ms 一次，避免每 200ms 触发一轮渲染。
 			let lastPaint = 0;
 			const restored = await waitForRestore((tick) => {
@@ -317,7 +337,6 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 			});
 			if (!alive.current) return;
 			if (restored) {
-				setStatus(t("restored"));
 				setPhase("done");
 				// 必须跳到干净的 "/"，不能用 reload()：
 				// reload() 会重放当前 URL。当前地址栏是「本次进程启动时打印的」
@@ -332,59 +351,149 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 			setRestarting(false);
 			setPhase("");
 			setElapsed(0);
-			setStatus("");
 			setError(t("timeout"));
 		}, [t, waitForRestore]);
 
-		/**
-		 * 进度条：把「后台正在做什么」画在设置行里，取代控制台报错。
-		 *
-		 * 进度值不追求精确，只求单调推进且阶段正确：
-		 *  - stopping：旧进程正在退出，进度 0→35%；
-		 *  - starting：新进程正在启动，进度 35→95%，按 12s 估算爬升；
-		 *  - done：已完成，100%。
-		 * @returns 进度条元素，未在重启时为 null。
-		 */
-		const progress = (() => {
-			if (!restarting) return null;
-			let percent = 0;
-			if (phase === "done") percent = 100;
-			else if (phase === "stopping") percent = 35;
-			else if (phase === "starting") {
-				percent = 35 + Math.min(60, Math.round((elapsed / 12000) * 60));
-			}
-			const label = phase === "done" ? t("restored")
-				: phase === "starting" ? t("starting")
-				: t("stopping");
-			const seconds = (elapsed / 1000).toFixed(1);
-			return react.createElement("div", { className: "rstb-progress", key: "progress" }, [
-				react.createElement("div", { className: "rstb-progressHead", key: "head" }, [
-					react.createElement("span", { className: "rstb-progressLabel", key: "l" }, label),
-					react.createElement("span", { className: "rstb-progressTime", key: "t" }, seconds + "s")
-				]),
-				react.createElement("div", { className: "rstb-track", key: "track" },
-					react.createElement("div", {
-						className: "rstb-bar" + (phase === "done" ? " rstb-barDone" : ""),
-						style: { width: percent + "%" }
-					}))
-			]);
-		})();
+		return { confirming, setConfirming, restarting, error, phase, elapsed, doRestart };
+	}
+
+	/**
+	 * ① 「重启」按钮 —— 挂在设置面板的全局标题栏，紧挨官方「打开配置文件」左侧。
+	 *
+	 * 位置动机：原先它在「设置 → 通用」页里，而通用页内容越堆越长，每次都要滚动才找得到；
+	 * 标题栏是**所有设置分页共用**的一行，放这里点开设置就能看到，彻底免去滚动。
+	 *
+	 * 外观刻意与官方「打开配置文件」一致（同一个 Button 组件、同样的 outline/sm），
+	 * 只把颜色换成 danger —— 重启会中断所有会话与后台任务，视觉上必须先给出警告信号。
+	 *
+	 * 进度与结果用小浮层贴在按钮下方：标题栏高度只有 54px，行内塞不下文字，
+	 * 也不能把标题栏撑高（会顶动整个设置面板的布局）。
+	 * @param props - 插槽 props：`t` 文案函数。
+	 * @returns 按钮与（重启中/失败时的）浮层。
+	 */
+	function HeaderRestart({ t }) {
+		const r = useRestart(t);
+		// 浮层关闭：仅用于「失败后用户手动收起」；重启中不允许关，否则看不到进度。
+		const [dismissed, setDismissed] = react.useState(false);
+		// 每次重新发起重启，都要让上一次的「已收起」失效。
+		react.useEffect(() => {
+			if (r.restarting) setDismissed(false);
+		}, [r.restarting]);
+
+		const button = Button !== null
+			? react.createElement(Button, {
+				key: "btn",
+				type: "button",
+				variant: "outline",
+				size: "sm",
+				className: "rstb-btnDanger",
+				disabled: r.restarting,
+				onClick: () => { r.setConfirming(true); },
+			}, r.restarting ? t("restarting") : t("button"))
+			: react.createElement("button", {
+				key: "btn",
+				type: "button",
+				className: "rstb-btn rstb-btnGhost rstb-btnDanger",
+				disabled: r.restarting,
+				onClick: () => { r.setConfirming(true); },
+			}, r.restarting ? t("restarting") : t("button"));
+
+		// 说明走平台气泡（hover 才出现），按钮本身保持与「打开配置文件」同宽同级。
+		const trigger = Tooltip === null ? button : react.createElement(Tooltip, {
+			key: "tip",
+			label: t("title") + "\n" + t("description"),
+			side: "bottom",
+			delayMs: 500,
+			maxWidth: 260,
+		}, button);
 
 		/**
-		 * 右端自启开关。
-		 *
-		 * 位置：文字在左、勾选框贴最右 —— 勾选框因此停在它独占一行时的**同一个 x 位置**，
-		 * 改完视觉跳动最小。
-		 *
-		 * 只有勾选框可点：文字只负责触发 tooltip。勾选会**真的写入/移除系统自启条目**，
-		 * 而鼠标要停在文字上看说明，若文字也是点击区，看一眼就会误改系统配置。
-		 *
-		 * 说明与状态走 tooltip（平台气泡，`position:fixed` 不会被面板裁切）；
-		 * 多行靠 `\n` —— 气泡是 `white-space:pre-line`。
+		 * 按钮下方的浮层：重启中显示阶段 + 秒数 + 进度条，失败/超时显示红字。
+		 * 成功时页面马上 replace 到 "/"，无需展示。
 		 */
-		const autoSwitch = (() => {
+		const flyout = (() => {
+			if (dismissed) return null;
+			if (!r.restarting && r.error === "") return null;
+			let percent = 0;
+			if (r.phase === "done") percent = 100;
+			else if (r.phase === "stopping") percent = 35;
+			else if (r.phase === "starting") {
+				percent = 35 + Math.min(60, Math.round((r.elapsed / 12000) * 60));
+			}
+			const label = r.error !== ""
+				? t("failedTip")
+				: r.phase === "done" ? t("restored")
+				: r.phase === "starting" ? t("starting")
+				: t("stopping");
+			const children = [
+				react.createElement("div", { className: "rstb-flyoutHead", key: "head" }, [
+					react.createElement("span", { className: "rstb-flyoutLabel", key: "l" }, label),
+					r.error !== ""
+						? react.createElement("button", {
+							key: "x",
+							type: "button",
+							className: "rstb-flyoutClose",
+							onClick: () => { setDismissed(true); },
+						}, "×")
+						: react.createElement("span", { className: "rstb-flyoutTime", key: "t" },
+							(r.elapsed / 1000).toFixed(1) + "s")
+				])
+			];
+			if (r.error !== "") {
+				children.push(react.createElement("div", { className: "rstb-flyoutError", key: "err" }, r.error));
+			} else {
+				children.push(react.createElement("div", { className: "rstb-track", key: "track" },
+					react.createElement("div", {
+						className: "rstb-bar" + (r.phase === "done" ? " rstb-barDone" : ""),
+						style: { width: percent + "%" }
+					})));
+			}
+			return react.createElement("div", { className: "rstb-flyout", key: "flyout" }, children);
+		})();
+
+		const node = react.createElement("div", { className: "rstb-headerAction" }, [trigger, flyout]);
+
+		if (!r.confirming) return node;
+		return react.createElement("div", { className: "rstb-headerAction" }, [
+			node,
+			react.createElement("div", { className: "rstb-overlay", key: "overlay" },
+				react.createElement("div", { className: "rstb-modal" }, [
+					react.createElement("div", { className: "rstb-modalTitle", key: "mt" }, t("confirmTitle")),
+					react.createElement("div", { className: "rstb-modalBody", key: "mb" }, t("confirmBody")),
+					react.createElement("div", { className: "rstb-modalActions", key: "ma" }, [
+						react.createElement("button", {
+							key: "cancel",
+							type: "button",
+							className: "rstb-btn rstb-btnGhost",
+							onClick: () => { r.setConfirming(false); }
+						}, t("cancel")),
+						react.createElement("button", {
+							key: "ok",
+							type: "button",
+							className: "rstb-btn rstb-btnSolidDanger",
+							onClick: () => { void r.doRestart(); }
+						}, t("confirm"))
+					])
+				]))
+		]);
+	}
+
+	/**
+	 * ② 「跟随系统启动」设置行 —— 留在「设置 → 通用」。
+	 *
+	 * 重启按钮搬去标题栏后，这一行只剩自启开关，故标题也换成它自己的名字，
+	 * 不再顶着「重启服务」的标题（否则会让人以为按钮丢了）。
+	 *
+	 * 只有勾选框可点：文字只负责触发 tooltip。勾选会**真的写入/移除系统自启条目**，
+	 * 而鼠标要停在文字上看说明，若文字也是点击区，看一眼就会误改系统配置。
+	 * @param props - 插槽 props：`t` 文案函数。
+	 * @returns 行元素树。
+	 */
+	function AutostartRow({ t }) {
+		const auto = useAutostart(t);
+
+		const switchCell = (() => {
 			const group = react.createElement("span", { className: "rstb-switch", key: "auto" }, [
-				react.createElement("span", { className: "rstb-switchLabel", key: "label" }, t("autoTitle")),
 				react.createElement("input", {
 					key: "box",
 					type: "checkbox",
@@ -410,58 +519,19 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 			}, group);
 		})();
 
-		const children = [
+		return react.createElement("div", { className: "rstb-row" }, [
 			react.createElement("div", { className: "rstb-head", key: "head" }, [
 				react.createElement("div", { className: "rstb-rowText", key: "text" }, [
-					react.createElement("div", { className: "rstb-title", key: "title" }, t("title")),
-					react.createElement("div", { className: "rstb-desc", key: "desc" }, t("description"))
+					react.createElement("div", { className: "rstb-title", key: "title" }, t("autoTitle")),
+					react.createElement("div", { className: "rstb-desc", key: "desc" }, t("autoDesc"))
 				]),
-				autoSwitch
+				switchCell
 			]),
 			// 自启操作失败：必须可见（例如 launchctl 不在登录域，要人去终端补一条命令）。
 			auto.error !== ""
 				? react.createElement("div", { className: "rstb-error", key: "autoError" }, auto.error)
-				: null,
-			react.createElement("div", { className: "rstb-controls", key: "controls" }, [
-				react.createElement("button", {
-					key: "btn",
-					type: "button",
-					className: "rstb-btn",
-					disabled: restarting,
-					onClick: () => { setConfirming(true); }
-				}, restarting ? t("restarting") : t("button")),
-				status !== "" && progress === null
-					? react.createElement("span", { className: "rstb-status", key: "status" }, status)
-					: null,
-				error !== "" ? react.createElement("span", { className: "rstb-error", key: "error" }, error) : null
-			])
-		].filter((child) => child !== null);
-
-		if (progress !== null) children.push(progress);
-
-		if (confirming) {
-			children.push(react.createElement("div", { className: "rstb-overlay", key: "overlay" },
-				react.createElement("div", { className: "rstb-modal" }, [
-					react.createElement("div", { className: "rstb-modalTitle", key: "mt" }, t("confirmTitle")),
-					react.createElement("div", { className: "rstb-modalBody", key: "mb" }, t("confirmBody")),
-					react.createElement("div", { className: "rstb-modalActions", key: "ma" }, [
-						react.createElement("button", {
-							key: "cancel",
-							type: "button",
-							className: "rstb-btn rstb-btnGhost",
-							onClick: () => { setConfirming(false); }
-						}, t("cancel")),
-						react.createElement("button", {
-							key: "ok",
-							type: "button",
-							className: "rstb-btn",
-							onClick: () => { void doRestart(); }
-						}, t("confirm"))
-					])
-				])));
-		}
-
-		return react.createElement("div", { className: "rstb-row" }, children);
+				: null
+		].filter((child) => child !== null));
 	}
 
 	/**
@@ -476,8 +546,8 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 	 *
 	 * 状态机：loading（首次读取）→ idle（可切换）→ busy（写入中）。
 	 *
-	 * 之所以抽成 hook 而不是自己渲染一整行：它现在只是「重启服务」那一行右端的子控件，
-	 * 布局归 {@link RestartRow}；而 error 必须由调用方内联渲染（不能塞进 tooltip）。
+	 * 之所以抽成 hook 而不是自己渲染一整行：它只是自启行右端的子控件，
+	 * 布局归 {@link AutostartRow}；而 error 必须由调用方内联渲染（不能塞进 tooltip）。
 	 * @param t - 文案函数。
 	 * @returns 供右端开关使用的状态与动作；`error` 需由调用方渲染成可见的一行。
 	 */
@@ -562,11 +632,11 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 	}
 
 	/**
-	 * 客户端插件入口：注册中英文字典，并把这一行挂进通用设置。
+	 * 客户端插件入口：注册中英文字典，并挂两处渲染点。
 	 *
-	 * **只有一次注册** —— 自启开关是 RestartRow 的右端子控件，不再单独注册。
-	 * 代价是两者同生共死（前者渲染异常会连带后者一起消失），换来的是省掉整行高度；
-	 * 这是刻意的取舍，理由见文件头。
+	 * 两处各注册一次、互不依赖：标题栏按钮（重启）与通用页行（自启）。
+	 * 之所以拆开，是因为重启要从「通用页深处」搬到「全局标题栏」；
+	 * 而自启开关属于系统配置，留在通用页更自然。
 	 * @param ctx - cordis 客户端上下文。
 	 */
 	function apply(ctx) {
@@ -574,14 +644,23 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		ctx.effect(() => ctx.locale.register(NS, { zh, en }), NS + ": dictionaries");
 		const t = ctx.locale.bind(NS);
 
-		// 「语言」(0)、「外观」(10/11) 之后就是这一行。
+		// ① 设置面板标题栏（所有分页共用）：order 为负，落在官方「打开配置文件」(order 0) 左侧。
+		ctx.slots.inject("settings.action", () => ctx.slots.register({
+			name: "settings.action",
+			id: NS + "/restart",
+			order: -10,
+			locale: NS,
+			inject: () => ({ t })
+		}, HeaderRestart));
+
+		// ② 「语言」(0)、「外观」(10/11) 之后就是自启这一行。
 		ctx.slots.inject("settings.general.item", () => ctx.slots.register({
 			name: "settings.general.item",
-			id: NS + "/restart",
+			id: NS + "/autostart",
 			order: 90,
 			locale: NS,
 			inject: () => ({ t })
-		}, RestartRow));
+		}, AutostartRow));
 	}
 
 	exports.apply = apply;

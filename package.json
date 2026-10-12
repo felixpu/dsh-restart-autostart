@@ -1,7 +1,7 @@
 {
   "name": "dsh-restart-autostart",
-  "version": "0.1.0",
-  "description": "在 DSH 网页版「设置 → 通用」加入进程控制行：手动重启 dsh web 宿主进程，以及「跟随系统启动」勾选框（写入 macOS launchd / Linux systemd / Windows 服务自启条目，开机拉起并在崩溃后自动重启）。",
+  "version": "0.2.0",
+  "description": "DSH 进程控制插件：设置面板标题栏的「重启」按钮（任何分页都能点，免滚动），以及「设置 → 通用」的「跟随系统启动」勾选框（写入 macOS launchd / Linux systemd / Windows 服务自启条目，开机拉起并在崩溃后自动重启）。",
   "icon": "icon.svg",
   "type": "module",
   "main": "lib/index.js",
