@@ -20,5 +20,5 @@
 #    com.dsh.restart.<port>（systemd 为 dsh-restart-<port>.service）**不会自动迁移**。
 #    升级后请重新勾选一次「跟随系统启动」，并手动清理旧条目与旧目录。
 - insert:
-    - id: dsh-restart-autostart
+    - id: restart-autostart
       name: 'dsh-restart-autostart'
