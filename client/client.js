@@ -128,7 +128,17 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		upgradeRisk: "升级只替换主程序，插件文件不会丢。若新版本与某个插件不兼容导致起不来，守护会自动回滚。",
 		upgradeAction: "升级并重启",
 		upgradeRunning: "升级中…",
-		upgradeRollback: "回滚到 {from}",
+		upgradeRollback: "回滚…",
+		upgradeCurrentPfx: "当前版本 {v}",
+		upgradeRollbackTitle: "回滚到指定版本",
+		upgradeRollbackHint: "当前运行中的主程序是 {current}。回滚会替换主程序并重启服务，期间会话会中断。",
+		upgradeRollbackLocal: "本地备份（免下载，秒级）",
+		upgradeRollbackPublished: "已发布版本（需联网下载）",
+		upgradeRollbackNeedNet: "（需联网重装）",
+		upgradeRollbackGo: "回滚到此版本",
+		upgradeVersionsLoad: "查看更多已发布版本",
+		upgradeVersionsLoading: "查询中…",
+		upgradeVersionsFailed: "查询已发布版本失败，可只用本地备份回滚。",
 		upgradeConfirmTitle: "升级到 {latest}？",
 		upgradeConfirmBody: "会先备份当前主程序，安装后重启服务做验证。若新版本起不来，守护会自动回滚到当前版本。升级期间会话会短暂中断。",
 		upgradeConfirm: "开始升级",
@@ -138,9 +148,6 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		upgradeStageVerify: "正在校验新版本…",
 		upgradeStageRestart: "正在重启服务…",
 		upgradeStageElapsed: "已等待 {s}s",
-		upgradeLastDone: "上次升级成功：{from} → {to}",
-		upgradeLastRolledBack: "上次升级已回滚：{from} → {to}",
-		upgradeLastFailed: "上次升级未完成：{from} → {to}",
 		// ④ 安全模式 —— guard 在新版本起不来时把第三方 bundle 摘掉后的状态展示
 		upgradeSafeModeTitle: "已进入安全模式",
 		upgradeSafeModeStatus: "安全模式：{count} 个第三方插件被临时停用。",
@@ -193,7 +200,17 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		upgradeRisk: "Only the host is replaced; plugin files are kept. If the new version cannot start because of an incompatible plugin, the guard rolls back automatically.",
 		upgradeAction: "Upgrade and restart",
 		upgradeRunning: "Upgrading…",
-		upgradeRollback: "Roll back to {from}",
+		upgradeRollback: "Roll back…",
+		upgradeCurrentPfx: "Current {v}",
+		upgradeRollbackTitle: "Roll back to a version",
+		upgradeRollbackHint: "The running host is {current}. Rolling back replaces it and restarts the service; sessions are interrupted.",
+		upgradeRollbackLocal: "Local backup (instant, no download)",
+		upgradeRollbackPublished: "Published versions (needs download)",
+		upgradeRollbackNeedNet: " (needs download)",
+		upgradeRollbackGo: "Roll back to this version",
+		upgradeVersionsLoad: "Show published versions",
+		upgradeVersionsLoading: "Loading…",
+		upgradeVersionsFailed: "Could not load published versions; local backups still work.",
 		upgradeConfirmTitle: "Upgrade to {latest}?",
 		upgradeConfirmBody: "The current host is backed up first; the service then restarts to verify the new version. If it cannot start, the guard rolls back automatically. Sessions are briefly interrupted.",
 		upgradeConfirm: "Start upgrade",
@@ -203,9 +220,6 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		upgradeStageVerify: "Verifying the new version…",
 		upgradeStageRestart: "Restarting the service…",
 		upgradeStageElapsed: "waited {s}s",
-		upgradeLastDone: "Last upgrade succeeded: {from} → {to}",
-		upgradeLastRolledBack: "Last upgrade was rolled back: {from} → {to}",
-		upgradeLastFailed: "Last upgrade did not finish: {from} → {to}",
 		// ④ Safe mode — shown after the guard removed third-party bundles to boot
 		upgradeSafeModeTitle: "Safe mode is active",
 		upgradeSafeModeStatus: "Safe mode: {count} third-party plugin(s) temporarily disabled.",
@@ -281,6 +295,7 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		".rstb-safeTitle{font-size:12px;line-height:18px;font-weight:600;color:var(--dsw-alias-state-warning-primary,#bf8700)}" +
 		".rstb-safeItem{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,inherit);word-break:break-word}" +
 		".rstb-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all}" +
+		".rstb-select{width:100%;box-sizing:border-box;height:30px;padding:0 8px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2,#e5e5e5);background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,inherit);font-size:12px;font-family:inherit}" +
 		".rstb-rowGroup{display:block}";
 
 	/** 注入一次本插件样式（按 tagId 去重，避免重复挂载时叠加）。 */
@@ -458,8 +473,6 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 	 */
 	const UI_POLL_MS = 2000;
 
-	/** 「上次升级…」这条播报的保鲜期：超过就不再显示（历史在 upgrade.log 里）。 */
-	const LAST_NOTE_TTL_MS = 24 * 60 * 60 * 1000;
 
 	/** 升级全过程的最长等待（毫秒）—— 装 849MB 依赖要几十秒，失败重试也要时间。 */
 	const UPGRADE_DEADLINE_MS = 10 * 60 * 1000;
@@ -491,6 +504,8 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 			startedAt: null,
 			last: null,
 			pending: null,
+			// 可回滚的本地版本（备份目录 + 上次升级记录）。为空时界面不显示「回滚」入口。
+			rollbacks: [],
 			// 安全模式状态：非 null 表示 guard 在「新版本起不来」时把第三方 bundle 摘掉了。
 			// 它由 guard 写盘、由本页解除，是唯一一条「用户看不见就必须靠猜」的状态。
 			safeMode: null,
@@ -522,6 +537,7 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 				startedAt: typeof data.startedAt === "number" && data.startedAt > 0 ? data.startedAt : null,
 				last: data.last ?? null,
 				pending: data.pending ?? null,
+				rollbacks: Array.isArray(data.rollbacks) ? data.rollbacks : [],
 				safeMode: data.safeMode !== null && typeof data.safeMode === "object" ? data.safeMode : null,
 			});
 			// 服务端已到终态时，本地那个「我这一页点过升级」的 busyUi 必须让位。
@@ -675,14 +691,19 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 			setFailure(t("upgradeTimeout"));
 		}, [merge, t]);
 
-		/** 回滚到上次升级前的版本。 */
-		const rollback = react.useCallback(async () => {
+		/**
+		 * 回滚到指定版本（不传则回到上一版）。
+		 *
+		 * @param version - 目标版本号；由界面上的版本选择给出。
+		 */
+		const rollback = react.useCallback(async (version = "") => {
 			setFailure("");
 			setBusyUi(true);
 			try {
 				const response = await fetch("/dsh-restart-autostart/upgrade/rollback", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
+					body: JSON.stringify(version === "" ? {} : { version }),
 				});
 				const data = await response.json().catch(() => ({}));
 				if (data.status) merge(data.status);
@@ -711,6 +732,24 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 				if (alive.current) setBusyUi(false);
 			}
 		}, [merge]);
+
+		/**
+		 * 拉「已发布版本」列表，供回滚时挑一个更老的版本。
+		 *
+		 * 只在用户点开版本选择时才调 —— 它要联网查 GitHub（未认证 60 次/小时），
+		 * 而绝大多数时候用户只是看一眼面板，不需要这份清单。
+		 *
+		 * @returns `{ ok, versions, error? }`；失败不抛异常。
+		 */
+		const loadVersions = react.useCallback(async () => {
+			try {
+				const response = await fetch("/dsh-restart-autostart/upgrade/versions", { cache: "no-store" });
+				if (!response.ok) throw new Error("HTTP " + response.status);
+				return await response.json();
+			} catch (err) {
+				return { ok: false, versions: [], error: String(err && err.message ? err.message : err) };
+			}
+		}, []);
 
 		/**
 		 * 退出安全模式：把被隔离的第三方插件装回去。
@@ -754,7 +793,7 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 			}
 		}, [merge]);
 
-		return { ...state, checking, failure, busyUi, elapsed, waitPhase, refresh, checkNow, start, rollback, clearSafe };
+		return { ...state, checking, failure, busyUi, elapsed, waitPhase, refresh, checkNow, start, rollback, clearSafe, loadVersions };
 	}
 
 	/**
@@ -777,6 +816,41 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		const [confirming, setConfirming] = react.useState("");
 		// 秒级心跳：只用于刷新「已等待 Ns」，不参与任何判断。
 		const [nowTick, setNowTick] = react.useState(Date.now());
+		// 组件是否还挂着：异步回调落地时先看它，避免在已卸载的组件上 setState。
+		const aliveRef = react.useRef(true);
+		react.useEffect(() => () => { aliveRef.current = false; }, []);
+
+		// 回滚版本选择：picking 控制弹窗，pick 是当前选中的版本。
+		// published 为 null 表示「还没查过已发布版本」—— 查它要联网，默认不查。
+		const [picking, setPicking] = react.useState(false);
+		const [pick, setPick] = react.useState("");
+		const [published, setPublished] = react.useState(null);
+		const [loadingVersions, setLoadingVersions] = react.useState(false);
+		const [versionsError, setVersionsError] = react.useState("");
+
+		/** 打开版本选择：默认选中最近的一个可回滚版本。 */
+		const openPicker = () => {
+			const candidates = Array.isArray(u.rollbacks) ? u.rollbacks : [];
+			setPick(candidates.length > 0 ? candidates[0].version : "");
+			setPublished(null);
+			setVersionsError("");
+			setPicking(true);
+		};
+
+		/** 联网拉「已发布版本」，填进同一个下拉的第二个分组。 */
+		const loadPublished = async () => {
+			setLoadingVersions(true);
+			setVersionsError("");
+			const data = await u.loadVersions();
+			if (!aliveRef.current) return;
+			setLoadingVersions(false);
+			if (data.ok === false) {
+				setVersionsError(data.error || t("upgradeVersionsFailed"));
+				setPublished([]);
+				return;
+			}
+			setPublished(Array.isArray(data.versions) ? data.versions : []);
+		};
 
 		// 安全模式：宿主是被 guard 用官方最小 bundle 拉起来的，第三方插件暂不在场。
 		const safe = u.safeMode;
@@ -820,7 +894,7 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		// 第二行：**一行说清状态**。三种「没有新版」的成因必须分开说，否则
 		// 「还没查过」会被误读成「已是最新」；升级中则把阶段与秒数并进同一行 ——
 		// 以前阶段文案在状态行和进度条下面各印一遍，是纯粹的重复。
-		const statusText = running
+		const stateText = running
 			? (stageSeconds > 0
 				? t(stageKey) + " · " + t("upgradeStageElapsed").replace("{s}", String(stageSeconds))
 				: t(stageKey))
@@ -831,9 +905,19 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 							: u.hasUpdate === false ? t("upgradeUpToDate")
 								: t("upgradeUnknown");
 
-		// 右侧动作：安全模式下只给「恢复插件」（+ 回滚 dsh）；否则按有无新版给升级/检查。
-		const hasRollbackTarget = !running && u.last !== null && typeof u.last === "object"
-			&& u.last.phase === "done" && typeof u.last.from === "string" && u.last.from !== "";
+		// 版本号并进这一行，而不是单独占一行：单独一行时它和平台上方的
+		// 「当前版本：x.y.z」挨着写同样的数字，看着像渲染错了；但完全去掉又不行 ——
+		// 回滚、对比新版都要拿它对。并成「当前版本 x · 说明」同时满足两件事。
+		// 升级中不加前缀：那行已经有阶段和秒数，再加版本会把人挤走。
+		const statusText = !running && typeof u.current === "string" && u.current !== ""
+			? t("upgradeCurrentPfx").replace("{v}", u.current) + " · " + stateText
+			: stateText;
+
+		// 回滚：只有真的存在可回滚的版本才给入口（本地备份或上次升级记录）。
+		// 以前按钮写死「回滚到 {上次的版本}」—— 只能回最近一次，想再退一档就没有路；
+		// 现在改成打开版本选择，可选本地备份里任意一版，也能联网挑更老的已发布版本。
+		const rollbacks = Array.isArray(u.rollbacks) ? u.rollbacks : [];
+		const canRollback = !running && rollbacks.length > 0;
 		const action = inSafe
 			? { label: t("upgradeSafeModeRestore"), kind: "solid", disabled: running, onClick: () => { setConfirming("restore"); } }
 			: u.hasUpdate === true
@@ -841,13 +925,13 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 				: { label: u.checking ? t("upgradeChecking") : t("upgradeRecheck"), kind: "ghost", disabled: u.checking || running, onClick: () => { void u.checkNow(); } };
 
 		const buttons = [
-			hasRollbackTarget
+			canRollback
 				? react.createElement("button", {
 					key: "rollback",
 					type: "button",
 					className: "rstb-btn rstb-btnGhost",
-					onClick: () => { void u.rollback(); },
-				}, t("upgradeRollback").replace("{from}", u.last.from))
+					onClick: () => { openPicker(); },
+				}, t("upgradeRollback"))
 				: null,
 			react.createElement("button", {
 				key: "action",
@@ -909,29 +993,84 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 			body.push(react.createElement("div", { className: "rstb-note", key: "risk" }, t("upgradeRisk")));
 		}
 
-		// 上次升级的结果：重启之后内存状态全丢，只有这份落盘记录能回答「刚才成没成」。
-		//
-		// 但只播报**一天内**的事，否则这条提示会永久占据面板：一周后它既不是新闻，
-		// 也没法据此做任何决定（真要回滚，右侧按钮已经写着「回滚到 x.y.z」）。
-		// 历史留在 logs/upgrade.log 里，需要时能查。
-		const lastAt = !running && u.last !== null && typeof u.last === "object"
-			&& typeof u.last.at === "string" ? Date.parse(u.last.at) : NaN;
-		const lastFresh = Number.isFinite(lastAt) && nowTick - lastAt < LAST_NOTE_TTL_MS;
-		if (lastFresh) {
-			const kind = u.last.phase === "done" ? "upgradeLastDone"
-				: u.last.phase === "rolled-back" ? "upgradeLastRolledBack"
-					: u.last.phase === "failed" ? "upgradeLastFailed" : "";
-			if (kind !== "") {
-				body.push(react.createElement("div", { className: "rstb-note", key: "last" },
-					t(kind).replace("{from}", u.last.from ?? "?").replace("{to}", u.last.to ?? "?")));
-			}
-		}
-
 		if (message !== "") {
 			body.push(react.createElement("div", { className: "rstb-error", key: "err" }, message));
 		}
 
 		const node = react.createElement("div", { className: "rstb-row" }, body);
+
+		// 回滚版本选择弹窗
+		if (picking) {
+			const options = [];
+			if (rollbacks.length > 0) {
+				options.push(react.createElement("optgroup", { label: t("upgradeRollbackLocal"), key: "local" },
+					rollbacks.map((item) => react.createElement("option", {
+						key: item.version,
+						value: item.version,
+					}, item.version + (item.source === "backup" ? "" : t("upgradeRollbackNeedNet"))))));
+			}
+			if (Array.isArray(published)) {
+				// 本地已有的版本不再重复列出（它们是同一个版本号，选了也只是走本地那条路径）。
+				const localSet = new Set(rollbacks.map((item) => item.version));
+				const extra = published.filter((item) => !localSet.has(item.version) && item.current !== true);
+				if (extra.length > 0) {
+					options.push(react.createElement("optgroup", { label: t("upgradeRollbackPublished"), key: "remote" },
+						extra.map((item) => react.createElement("option", {
+							key: item.version,
+							value: item.version,
+						}, item.version + (item.publishedAt ? " · " + item.publishedAt.slice(0, 10) : "")))));
+				}
+			}
+
+			const pickerBody = [
+				react.createElement("div", { className: "rstb-modalTitle", key: "t" }, t("upgradeRollbackTitle")),
+				react.createElement("div", { className: "rstb-modalBody", key: "hint" },
+					t("upgradeRollbackHint").replace("{current}", u.current ?? "?")),
+			];
+			if (options.length > 0) {
+				pickerBody.push(react.createElement("select", {
+					className: "rstb-select",
+					key: "select",
+					value: pick,
+					onChange: (event) => { setPick(event.target.value); },
+				}, options));
+			}
+			if (published === null) {
+				pickerBody.push(react.createElement("div", { className: "rstb-modalBody", key: "more" }, [
+					react.createElement("button", {
+						key: "load",
+						type: "button",
+						className: "rstb-btn rstb-btnGhost",
+						disabled: loadingVersions,
+						onClick: () => { void loadPublished(); },
+					}, loadingVersions ? t("upgradeVersionsLoading") : t("upgradeVersionsLoad")),
+				]));
+			}
+			if (versionsError !== "") {
+				pickerBody.push(react.createElement("div", { className: "rstb-error", key: "verr" }, versionsError));
+			}
+			pickerBody.push(react.createElement("div", { className: "rstb-modalActions", key: "ma" }, [
+				react.createElement("button", {
+					key: "cancel",
+					type: "button",
+					className: "rstb-btn rstb-btnGhost",
+					onClick: () => { setPicking(false); },
+				}, t("cancel")),
+				react.createElement("button", {
+					key: "ok",
+					type: "button",
+					className: "rstb-btn",
+					disabled: pick === "",
+					onClick: () => { setPicking(false); if (pick !== "") void u.rollback(pick); },
+				}, t("upgradeRollbackGo")),
+			]));
+
+			return react.createElement("div", { className: "rstb-rowGroup" }, [
+				node,
+				react.createElement("div", { className: "rstb-overlay", key: "overlay" },
+					react.createElement("div", { className: "rstb-modal" }, pickerBody)),
+			]);
+		}
 
 		if (confirming === "") return node;
 		const isRestore = confirming === "restore";

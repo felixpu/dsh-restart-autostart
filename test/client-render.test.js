@@ -113,6 +113,31 @@ function findButton(node, label) {
 	return findButton(node.children, label);
 }
 
+/** 把 createElement 的 children（可能是单对象、数组或 undefined）统一成数组。 */
+function childList(node) {
+	if (node === null || node === undefined) return [];
+	const children = node.children;
+	if (children === undefined || children === null || children === false) return [];
+	return Array.isArray(children) ? children.filter((c) => c !== null && c !== undefined) : [children];
+}
+
+/** 找到第一个指定 type 的元素。 */
+function findByType(node, type) {
+	if (node === null || typeof node !== "object") return null;
+	if (Array.isArray(node)) {
+		for (const child of node) {
+			const hit = findByType(child, type);
+			if (hit !== null) return hit;
+		}
+		return null;
+	}
+	if (node.type === type) return node;
+	return findByType(node.children, type);
+}
+
+/** 让挂起的 promise 落地（桩里的 useEffect 是同步执行的，异步回调要等一轮宏任务）。 */
+const flush = () => new Promise((resolve) => setTimeout(resolve, 5));
+
 /** 从 ctx 桩里取出指定的插槽组件。 */
 function grabComponent(exports, slotName, idSuffix) {
 	const registered = new Map();
@@ -198,11 +223,22 @@ const safeState = {
 		check("render   普通状态能渲染出元素树", false, `抛出：${error && error.message}`);
 	}
 	const flat = texts(tree).join("|");
-	// 版本号由平台在正上方那行「当前版本：x.y.z」负责，本行**不再重复印一遍**。
-	// 以前两行紧挨着写同一个数字，看着像渲染错了（用户就是在截图里指的这一处）。
-	check("no-dup   行内不再重复印当前版本", !flat.includes("0.2.1-rc.3"), flat);
+	// 版本号**并进状态那一行**：单独占一行时，它和平台上方的「当前版本：x.y.z」
+	// 紧挨着写同样的数字，看着像渲染错了（用户就是在截图里指的这一处）；
+	// 完全去掉又不行 —— 回滚、对比新版都要拿它对。所以「当前版本 x · 说明」合成一行。
+	check("no-dup   当前版本只印一次（不再另起一行重复）",
+		flat.split("0.2.1-rc.3").length - 1 === 1, flat);
+	check("status   版本号与状态说明在同一行",
+		flat.includes("当前版本 0.2.1-rc.3 · 有新版本 0.2.1-rc.4，可一键升级。"), flat);
 	const rawKeys = texts(tree).filter((text) => /^upgrade[A-Z]/.test(text));
 	check("keys     没有裸文案键（字典不缺键）", rawKeys.length === 0, rawKeys.join("、"));
+
+	// 用户的原话是「上面的当前版本就放到已是最新版本这个说明这里」——
+	// 没有新版时，版本号必须和「已是最新版本」合并成一句，而不是两行。
+	control.state = { ...baseState, latest: "0.2.1-rc.3", hasUpdate: false };
+	const upToDate = texts(entry.component({ t: dictT })).join("|");
+	check("status   「已是最新版本」那行带着当前版本",
+		upToDate.includes("当前版本 0.2.1-rc.3 · 已是最新版本。"), upToDate);
 }
 
 // ── ② 安全模式：告警块、被摘插件、恢复按钮 ──────────────────────────────────
@@ -253,26 +289,115 @@ const safeState = {
 	check("busy    升级中按钮禁用并改文案", button !== null && button.props.disabled === true);
 }
 
-// ── ④ 「上次升级…」的保鲜期：一天内播报，过期静默 ─────────────────────────
+// ── ④ 回滚可以选版本：入口、弹窗、本地 / 已发布两个分组 ──────────────────────
+//
+// 旧实现把目标版本写死在按钮文案里（「回滚到 0.2.1-rc.2」）—— 只能退最近一档，
+// 想再退一档就没有路。现在点「回滚…」打开版本选择：本地备份里的任意一版（免下载）
+// 加上联网查到的已发布版本。同时「上次升级成功：x → y」那条播报已按用户要求删掉。
 {
-	const { module, control } = loadBundle();
+	const { module, control, render } = loadBundle();
 	installDictT(module, control);
-	const recent = {
+	const entry = grabComponent(module, "settings.general.item", "/upgrade");
+
+	const rollbacks = [
+		{ version: "0.2.1-rc.2", source: "backup", backupDir: "/tmp/backups/rc2" },
+		{ version: "0.2.1-rc.1", source: "record", backupDir: null },
+	];
+	const last = {
 		phase: "done", from: "0.2.1-rc.2", to: "0.2.1-rc.3",
 		at: new Date(Date.now() - 3600 * 1000).toISOString(),
 	};
-	control.state = { ...baseState, hasUpdate: false, last: recent };
-	const entry = grabComponent(module, "settings.general.item", "/upgrade");
-	const flat = texts(entry.component({ t: dictT })).join("|");
-	check("last     一天内的升级结果会播报", flat.includes("上次升级成功"), flat);
+	control.state = { ...baseState, latest: "0.2.1-rc.3", hasUpdate: false, rollbacks, last };
 
-	const stale = { ...recent, at: new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString() };
-	control.state = { ...baseState, hasUpdate: false, last: stale };
-	const tree = grabComponent(module, "settings.general.item", "/upgrade").component({ t: dictT });
-	const flatOld = texts(tree).join("|");
-	check("last     超过一天就不再显示（长期噪声）", !flatOld.includes("上次升级成功"), flatOld);
-	check("last     但回滚按钮仍在（那是动作，不是播报）",
-		findButton(tree, "回滚到 0.2.1-rc.2") !== null);
+	let tree = render(entry.component, dictT);
+	check("rollback 有可回滚版本时给出「回滚…」入口", findButton(tree, "回滚…") !== null);
+	check("rollback 入口不再把目标版本写死在文案里",
+		findButton(tree, "回滚到 0.2.1-rc.2") === null);
+
+	// 这一条对应用户「这个提示我认为没有必要」那一句：无论 last 多新，都不该再播报。
+	check("rollback 「上次升级成功」播报已移除",
+		!texts(tree).join("|").includes("上次升级"), texts(tree).join("|"));
+
+	// 点开 → 默认选中最近的一版（rollbacks[0]，已按版本号倒序）
+	const mark = control.setCalls.length;
+	let clickError = null;
+	try { findButton(tree, "回滚…").props.onClick(); } catch (error) { clickError = error; }
+	check("rollback 点「回滚…」不抛异常", clickError === null, clickError && clickError.message);
+	const opened = control.setCalls.slice(mark);
+	check("rollback 打开时默认选中最近的一版",
+		opened.some((call) => call.value === "0.2.1-rc.2"), JSON.stringify(opened));
+
+	// 桩不会重渲染，所以把三个状态按 hook 序号覆盖回去，再渲染一次得到弹窗本体。
+	// 序号从 setCalls 里反查，不写死 —— 写死会随组件里 hook 增减而悄悄失效。
+	const idxOf = (predicate) => opened.find(predicate)?.index;
+	const pickingHook = idxOf((call) => call.value === true);
+	const pickHook = idxOf((call) => call.value === "0.2.1-rc.2");
+	const publishedHook = idxOf((call) => call.value === null);
+	check("rollback 三个状态钩子都定位到了",
+		[pickingHook, pickHook, publishedHook].every((i) => typeof i === "number"),
+		JSON.stringify(opened));
+
+	// 弹窗第一态：只有本地备份，published 仍是 null（还没联网查过）。
+	control.overrides[pickingHook] = true;
+	control.overrides[pickHook] = "0.2.1-rc.2";
+	const panel = render(entry.component, dictT);
+	const select = findByType(panel, "select");
+	check("rollback 弹窗里有版本下拉", select !== null);
+	const localOnly = select === null ? [] : childList(select).filter((child) => child.type === "optgroup");
+	check("rollback 默认只给出「本地备份」分组（联网那份按需再查）",
+		localOnly.length === 1 && localOnly[0].props.label === "本地备份（免下载，秒级）",
+		localOnly.map((group) => group.props.label).join("、"));
+	if (select !== null) {
+		check("rollback 下拉默认值就是刚才选中的版本", select.props.value === "0.2.1-rc.2",
+			String(select.props.value));
+	}
+	const go = findButton(panel, "回滚到此版本");
+	check("rollback 选中版本后「回滚到此版本」可用", go !== null && go.props.disabled !== true);
+
+	// 「查看更多已发布版本」要真的打到 /upgrade/versions（那是联网路由，默认不查）
+	const realFetch = globalThis.fetch;
+	const hits = [];
+	globalThis.fetch = async (url) => {
+		hits.push(String(url));
+		return { ok: true, json: async () => ({ ok: true, versions: [{ version: "0.2.1-alpha.4" }] }) };
+	};
+	try {
+		const load = findButton(panel, "查看更多已发布版本");
+		check("rollback 弹窗里有「联网查更多版本」入口", load !== null);
+		const tick = control.setCalls.length;
+		if (load !== null) load.props.onClick();
+		await flush();
+		check("rollback 查版本打的是 /upgrade/versions",
+			hits.some((url) => url.endsWith("/upgrade/versions")), hits.join(","));
+		check("rollback 查回来的版本进了下拉",
+			control.setCalls.slice(tick).some((call) => Array.isArray(call.value)
+				&& call.value.some((item) => item.version === "0.2.1-alpha.4")),
+			JSON.stringify(control.setCalls.slice(tick)));
+	} finally {
+		globalThis.fetch = realFetch;
+	}
+
+	// 弹窗第二态：已发布清单到位。本地已有 / 当前运行中的版本必须被滤掉，否则
+	// 同一个版本号会在下拉里出现两次（分属两个分组），选哪个都说不清。
+	control.overrides[publishedHook] = [
+		{ version: "0.2.1-rc.3", current: true },
+		{ version: "0.2.1-rc.2" },
+		{ version: "0.2.1-alpha.5", publishedAt: "2026-10-01T08:00:00Z" },
+	];
+	const loaded = findByType(render(entry.component, dictT), "select");
+	const groups = loaded === null ? [] : childList(loaded).filter((child) => child.type === "optgroup");
+	const labels = groups.map((group) => group.props.label);
+	check("rollback 两个分组都在", labels.includes("本地备份（免下载，秒级）")
+		&& labels.includes("已发布版本（需联网下载）"), labels.join("、"));
+	const values = groups.flatMap((group) => childList(group)).map((option) => option.props.value);
+	check("rollback 本地已有和当前版本不会重复列出",
+		values.filter((value) => value === "0.2.1-rc.2").length === 1 && !values.includes("0.2.1-rc.3"),
+		values.join(","));
+	check("rollback 能选到本地已没有的旧版本", values.includes("0.2.1-alpha.5"), values.join(","));
+	check("rollback 查到清单后「联网查更多」入口收起",
+		findButton(loaded, "查看更多已发布版本") === null);
+	check("rollback 弹窗关闭后不留遮罩",
+		findByType(tree, "select") === null && texts(tree).join("|").includes("已是最新版本"));
 }
 
 // ── ⑤ 状态收敛：宿主换版本后，「升级中」必须自己让位 ────────────────────────
@@ -287,7 +412,6 @@ const safeState = {
 
 	// busyUi 是 useUpgrade 里第 4 个 useState（state / checking / failure / busyUi）。
 	const BUSY_UI_HOOK = 3;
-	const flush = () => new Promise((resolve) => setTimeout(resolve, 5));
 
 	const realFetch = globalThis.fetch;
 	let scripted = null;
