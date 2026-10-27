@@ -68,6 +68,14 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 	const POLL_TIMEOUT_MS = 90000;
 
 	/**
+	 * 「隐藏平台版本行」那张样式表的 tagId。
+	 *
+	 * 单独一张表而不是并进主 CSS：主 CSS 是静态的，这张的内容要等官方 style 表出现后
+	 * 才能算出类名；混在一起就得整表重写，且去重键会对不上。
+	 */
+	const HIDE_ID = NS + "/hide-official-version.css";
+
+	/**
 	 * 首次探测前的静默等待（毫秒）。
 	 *
 	 * 这段时间是「必然会失败」的窗口：旧进程正在优雅关闭、新进程还没 bind，
@@ -307,6 +315,60 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		tag.dataset.pluginCss = tagId;
 		tag.textContent = CSS;
 		document.head.appendChild(tag);
+	}
+
+	/**
+	 * 让平台自带的「当前版本：x.y.z」那一行让位。
+	 *
+	 * 为什么由本插件来删：版本号已经并进本插件那行的状态说明（「当前版本 x.y.z · 已是最新版本。」），
+	 * 而平台那行（`@deepseek-ai/dsh-client-ui-settings-general` 的 `CurrentVersionRow`）就在正上方，
+	 * 两行写同一个数字，看着像渲染错了 —— 用户指着截图说的就是这一处。
+	 * 它是官方内置插件渲染的 `div`，我们改不了它的源码（升级 dsh 会整包覆盖），只能从样式上让它不显示。
+	 *
+	 * 为什么不写死 `.yIbyla_row`：那是 CSS Modules 的构建哈希（`<hash>_row`），官方包一重新构建就变，
+	 * 写死等于埋一个「某次升级后它又冒出来」的静默失效 —— 而且不会有任何报错提醒。
+	 * 这里改为**读官方自己注入的那张 style 表**（`data-plugin-css="…/CurrentVersionRow.module.css"`），
+	 * 从中解析出真实的类名再补一条 `display:none`，哈希怎么变都跟得上。
+	 *
+	 * 官方若哪天不再渲染这一行（标签不存在、或里面没有 `_row` 类），这里什么都不做 ——
+	 * 宁可留着那一行，也不能误伤别的行（同一个包里还有 `DeveloperToolsRow` 等 `_row` 类）。
+	 *
+	 * @returns 无返回值；失败静默，不影响其余 UI。
+	 */
+	function hideOfficialVersionRow() {
+		if (typeof document === "undefined" || document.head === null) return;
+		try {
+			const cssId = "@deepseek-ai/dsh-client-ui-settings-general/CurrentVersionRow.module.css";
+			const selector = "style[data-plugin-css=" + JSON.stringify(cssId) + "]";
+			const installed = () => document.querySelector("style[data-plugin-css=" + JSON.stringify(HIDE_ID) + "]") !== null;
+
+			/** 从官方 style 表里取出真实类名并注入隐藏规则；取不到返回 false。 */
+			const hideFrom = (node) => {
+				if (installed()) return true;
+				const text = node !== null && typeof node.textContent === "string" ? node.textContent : "";
+				const found = /\.([A-Za-z0-9_-]+_row)\s*\{/.exec(text);
+				if (found === null) return false;
+				const tag = document.createElement("style");
+				tag.dataset.plugin = NS;
+				tag.dataset.pluginCss = HIDE_ID;
+				tag.textContent = "." + found[1] + "{display:none}";
+				document.head.appendChild(tag);
+				return true;
+			};
+
+			// 常见情形：官方 bundle 先执行（我们要挂在它的 slot 里，它必然已加载）。
+			if (hideFrom(document.querySelector(selector))) return;
+
+			// 兜底：两个 bundle 的执行顺序没有约定，官方晚到时再补一次。
+			// 只观察 head 的新增节点，命中即断开 —— 不做定时轮询，也不永久占着观察者。
+			if (typeof MutationObserver !== "function") return;
+			const observer = new MutationObserver(() => {
+				if (hideFrom(document.querySelector(selector))) observer.disconnect();
+			});
+			observer.observe(document.head, { childList: true });
+		} catch {
+			// 这里只为「少一行重复的版本号」，任何意外都不该影响插件其余部分。
+		}
 	}
 
 	/**
@@ -1390,6 +1452,7 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 	 */
 	function apply(ctx) {
 		installStyles();
+		hideOfficialVersionRow();
 		ctx.effect(() => ctx.locale.register(NS, { zh, en }), NS + ": dictionaries");
 		const t = ctx.locale.bind(NS);
 

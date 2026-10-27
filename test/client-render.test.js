@@ -20,11 +20,45 @@ function loadBundle() {
 	const source = fs.readFileSync(path.join(import.meta.dirname, "..", "client", "client.js"), "utf8");
 	let loaded = null;
 
+	/**
+	 * 桩的控制器。
+	 *
+	 * - `state`：注入 useUpgrade 的状态对象（第一个对象型 useState）。
+	 * - `overrides`：按 **hook 调用序号** 覆盖某个 useState 的当前值（用来模拟
+	 *   `busyUi === true`）。
+	 * - `setCalls`：记录组件里每次 setXxx 的调用，用来验证「某个状态被主动清了」——
+	 *   这类行为在渲染结果上看不出来（桩不会真的重渲染），只能看调用。
+	 * - `refs`：按 hook 序号复用 ref 对象，跨多次渲染保持，模拟同一组件实例。
+	 * - `headStyles` / `injected`：head 里的 style 标签与注入记录。
+	 */
 	const noop = () => {};
+	const control = {
+		state: null, overrides: {}, setCalls: [], refs: [],
+		// 模拟 document.head 里的 style 标签：tagId → textContent。
+		// 「隐藏平台版本行」要靠它读到官方 CSS Modules 的真实类名，故必须可注入。
+		headStyles: new Map(),
+		// 记录所有被插进 head 的 style，供断言「注入了什么」。
+		injected: [],
+	};
+
+	const fakeHead = {
+		appendChild: (tag) => {
+			const id = tag !== null && tag.dataset ? tag.dataset.pluginCss : undefined;
+			if (typeof id !== "string") return;
+			const text = String(tag.textContent ?? "");
+			control.headStyles.set(id, text);
+			control.injected.push({ id, text });
+		},
+	};
 	const fakeDocument = {
-		querySelector: () => null,
+		// 只支持本插件用到的那一种选择器：style[data-plugin-css="<tagId>"]
+		querySelector: (selector) => {
+			const hit = /^style\[data-plugin-css="(.+)"\]$/.exec(String(selector));
+			if (hit === null || !control.headStyles.has(hit[1])) return null;
+			return { textContent: control.headStyles.get(hit[1]) };
+		},
 		createElement: () => ({ setAttribute: noop, appendChild: noop, textContent: "", dataset: {} }),
-		head: { appendChild: noop },
+		head: fakeHead,
 	};
 	const fakeWindow = { __ModuleLoader__: { load: (options) => { loaded = options; } } };
 
@@ -35,16 +69,8 @@ function loadBundle() {
 	}
 
 	/**
-	 * 桩的控制器。
-	 *
-	 * - `state`：注入 useUpgrade 的状态对象（第一个对象型 useState）。
-	 * - `overrides`：按 **hook 调用序号** 覆盖某个 useState 的当前值（用来模拟
-	 *   `busyUi === true`）。
-	 * - `setCalls`：记录组件里每次 setXxx 的调用，用来验证「某个状态被主动清了」——
-	 *   这类行为在渲染结果上看不出来（桩不会真的重渲染），只能看调用。
-	 * - `refs`：按 hook 序号复用 ref 对象，跨多次渲染保持，模拟同一组件实例。
+	 * hook 调用序号。每次 render 前归零 —— `overrides` 里的序号据此稳定指向同一个 hook。
 	 */
-	const control = { state: null, overrides: {}, setCalls: [], refs: [] };
 	let hookIndex = 0;
 
 	const react = {
@@ -454,6 +480,48 @@ const safeState = {
 	} finally {
 		globalThis.fetch = realFetch;
 	}
+}
+
+// ── ⑥ 让平台的「当前版本」行让位（它和本插件的状态行写着同一个数字）──────────
+//
+// 平台那行由内置插件 `@deepseek-ai/dsh-client-ui-settings-general` 的 `CurrentVersionRow`
+// 渲染，类名是 CSS Modules 的 `<hash>_row`（本轮在真机上看到的是 `yIbyla_row`，但哈希
+// 随官方构建而变）。写死哈希等于埋一个「某次 dsh 升级后它又冒出来」的静默失效，
+// 所以实现是「读官方自己注入的那张 style 表 → 解析出真实类名 → 补一条 display:none」。
+{
+	const OFFICIAL = "@deepseek-ai/dsh-client-ui-settings-general/CurrentVersionRow.module.css";
+
+	// ① 正常情形：官方表已在 head 里。故意用一个「不是 yIbyla」的哈希，证明没写死。
+	const { module, control } = loadBundle();
+	control.headStyles.set(OFFICIAL,
+		".q7Zk3p_row{color:var(--dsw-alias-label-primary);padding:16px 0;font-size:14px}");
+	installDictT(module, control);
+	const hides = () => control.injected.filter((item) => item.id.endsWith("/hide-official-version.css"));
+	check("hide     注入了隐藏规则", hides().length === 1,
+		JSON.stringify(control.injected.map((item) => item.id)));
+	check("hide     用的是官方真实类名（哈希没被写死）",
+		hides()[0]?.text === ".q7Zk3p_row{display:none}", hides()[0]?.text);
+	check("hide     本插件自己的样式表不受影响",
+		control.injected.some((item) => item.id.endsWith("/row.css")));
+
+	// 重复挂载（HMR、来回切设置分页）不能叠加出第二张表
+	installDictT(module, control);
+	check("hide     重复挂载不会叠加注入", hides().length === 1, String(hides().length));
+
+	// ② 官方改了命名（解析不出 `_row` 结尾的类）：什么都不做 ——
+	//    同一个包里还有 DeveloperToolsRow 等 `_row` 类，宁可留着那一行也不能误伤。
+	const other = loadBundle();
+	other.control.headStyles.set(OFFICIAL, ".v9x_developerRow{display:flex;gap:24px}");
+	installDictT(other.module, other.control);
+	check("hide     解析不出类名时保持克制",
+		other.control.injected.every((item) => !item.id.endsWith("/hide-official-version.css")),
+		JSON.stringify(other.control.injected.map((item) => item.id)));
+
+	// ③ 官方 bundle 比本插件晚执行：不抛异常，也不留半截状态
+	const late = loadBundle();
+	installDictT(late.module, late.control);
+	check("hide     官方表还没出现时不抛异常，也不注入",
+		late.control.injected.every((item) => !item.id.endsWith("/hide-official-version.css")));
 }
 
 console.log("----------------------------------------");

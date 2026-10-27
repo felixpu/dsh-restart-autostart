@@ -66,6 +66,15 @@ dsh plugin --profile web add github:felixpu/dsh-restart-autostart
 > 升级结果**不再在面板上播报**（「上次升级成功：x → y」那种提示只增噪不增信息，
 > 成功的证据本来就是「当前版本变了」）；完整历史在 `logs/upgrade.log`。
 
+> **平台自带的那行「当前版本：x.y.z」已被本插件隐藏。** 它由内置插件
+> `@deepseek-ai/dsh-client-ui-settings-general` 的 `CurrentVersionRow` 渲染，只印一句版本号，
+> 和本行状态里的「当前版本 …」完全重复。官方包源码改不了（升级 dsh 会整包覆盖），
+> 所以从样式上让它 `display:none`。它的类名是 CSS Modules 的 `<hash>_row`
+> （真机上实测为 `yIbyla_row`）——**写死哈希会在某次 dsh 升级后静默失效**，
+> 所以实现是「读官方自己注入的那张 style 表（`data-plugin-css="…/CurrentVersionRow.module.css"`）
+> 再解析出真实类名」。官方若改了命名导致解析不出来，插件什么都不做：
+> 宁可多一行重复，也不误伤同一个包里的其它行（那里还有 `DeveloperToolsRow` 等同类 `_row`）。
+
 > 入口不在标题栏：平台本来就在通用页底部显示「当前版本」，升级贴着版本号放，语义上是一件事；标题栏只留「重启」一个动作。进度**内联**在这一行下方而不是浮层——点下去就必须立刻有可见变化，否则容易误以为「点了没反应」。
 
 版本来源是 **GitHub Releases**（`dsh-v*` tag），不是 npm dist-tags —— npm 上存在「只改版本号、代码零改动」的僵尸发布，按它升级会出现「显示已是最新、实际代码没变」的假象。检查结果缓存 6 小时（未认证的 GitHub API 上限 60 次/小时），随时可点「重新检查」强制刷新。
