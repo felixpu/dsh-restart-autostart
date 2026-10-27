@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Process control",
-    "description": "Adds a Restart button to the settings panel header — reachable from any settings page without scrolling — plus a Launch at system startup checkbox in Settings → General that writes a macOS launchd / Linux systemd / Windows service entry to start DSH on boot and restart it after a crash."
+    "description": "Adds a Restart button to the settings panel header (reachable from any settings page without scrolling); a DSH host version row in Settings → General that checks for a newer host release and upgrades in one click (backing up first, isolating third-party plugins in safe mode when the new version cannot boot, and rolling back only if that still fails); and a Launch at system startup checkbox that writes a macOS launchd / Linux systemd / Windows service entry to start DSH on boot and restart it after a crash."
   }
 }

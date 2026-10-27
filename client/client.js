@@ -37,17 +37,15 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 	}
 
 	/**
-	 * dsh-restart-autostart 浏览器半身 —— 设置面板标题栏的动作 + 「设置 → 通用」里的一行。
+	 * dsh-restart-autostart 浏览器半身 —— 设置面板标题栏的两个动作 + 「设置 → 通用」里的一行。
 	 *
-	 * 由 dsh-restart-autostart-button 与 dsh-autostart 合并而来（现名 dsh-restart-autostart），仍是两条独立功能线：
+	 * 三条功能线：
 	 *   ① 手动重启     —— 标题栏按钮 + 确认弹窗，同源 POST /dsh-restart-autostart/restart
 	 *   ② 重启守护     —— 通用页那一行的勾选框，/dsh-restart-autostart/autostart/{status,enable,disable}
+	 *   ③ 一键升级     —— 「通用」页最下面的版本行，/dsh-restart-autostart/upgrade/{status,check,start,rollback}
 	 *
-	 * 两者现在**分处两地**：
-	 *   ① 手动重启 —— 挂进设置面板的**全局标题栏**（槽 `settings.action`），
-	 *      紧挨官方「打开配置文件」左侧，位于关闭按钮之前。任何设置分页都能点它，
-	 *      不必再滚动「通用」页去找（这正是本次改动要解决的问题）。
-	 *   ② 自启开关 —— 留在「设置 → 通用」的那一行，标题改成它自己的名字。
+	 * 布局上分两处：重启留在设置面板标题栏（全局共用，免滚动）；升级与自启都在
+	 * 「设置 → 通用」—— 升级贴着平台那行「当前版本」放在最下面，自启是系统配置。
 	 *
 	 * 之所以不放回 `settings.general.item` 并排：该槽是**单列 flex、每项一棵独立
 	 * DOM 子树**，两个注册永远并不到一行；而标题栏那一行是全局共用、位置固定的。
@@ -119,6 +117,40 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		autoUnverified: "当前平台的自动配置尚未经过真机验证，如遇问题请手动检查自启条目。",
 		autoFailed: "操作失败：",
 		autoLoadFailed: "读取自启状态失败",
+		// ③ 一键升级（「设置 → 通用」最下面的版本行）
+		upgradeRowTitle: "DSH 主程序版本",
+		upgradeHasNew: "有新版本 {latest}，可一键升级。",
+		upgradeLoading: "读取中…",
+		upgradeChecking: "检查中…",
+		upgradeRecheck: "重新检查",
+		upgradeUnknown: "还没有版本信息，点「重新检查」查一次。",
+		upgradeUpToDate: "已是最新版本。",
+		upgradeRisk: "升级只替换主程序，插件文件不会丢。若新版本与某个插件不兼容导致起不来，守护会自动回滚。",
+		upgradeAction: "升级并重启",
+		upgradeRunning: "升级中…",
+		upgradeRollback: "回滚到 {from}",
+		upgradeConfirmTitle: "升级到 {latest}？",
+		upgradeConfirmBody: "会先备份当前主程序，安装后重启服务做验证。若新版本起不来，守护会自动回滚到当前版本。升级期间会话会短暂中断。",
+		upgradeConfirm: "开始升级",
+		upgradeTimeout: "服务未在预期时间内恢复，请查看日志或手动重启。",
+		upgradeStageBackup: "正在备份主程序…",
+		upgradeStageInstall: "正在安装新版本（需要几十秒）…",
+		upgradeStageVerify: "正在校验新版本…",
+		upgradeStageRestart: "正在重启服务…",
+		upgradeStageElapsed: "已等待 {s}s",
+		upgradeLastDone: "上次升级成功：{from} → {to}",
+		upgradeLastRolledBack: "上次升级已回滚：{from} → {to}",
+		upgradeLastFailed: "上次升级未完成：{from} → {to}",
+		// ④ 安全模式 —— guard 在新版本起不来时把第三方 bundle 摘掉后的状态展示
+		upgradeSafeModeTitle: "已进入安全模式",
+		upgradeSafeModeStatus: "安全模式：{count} 个第三方插件被临时停用。",
+		upgradeSafeModeBody: "新版本启动失败，守护已把 {count} 个第三方插件临时摘出，改用官方最小配置启动。服务现在是正常的，这些插件的功能暂时不可用。",
+		upgradeSafeModeSuspects: "疑似涉事插件：{list}",
+		upgradeSafeModeAt: "进入时间：{at}",
+		upgradeSafeModeRestore: "恢复插件",
+		upgradeSafeModeRestoring: "正在恢复插件并重启…",
+		upgradeSafeModeRestoreTitle: "装回 {count} 个插件？",
+		upgradeSafeModeRestoreBody: "会把这些插件重新加入启动列表并重启服务。如果其中仍有不兼容的，服务可能再次起不来 —— 那时守护会再次进入安全模式，不会让你失去服务。",
 	};
 
 	const en = {
@@ -150,6 +182,40 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		autoUnverified: "Automatic setup on this platform has not been verified on real hardware. Check the autostart entry manually if something looks wrong.",
 		autoFailed: "Operation failed: ",
 		autoLoadFailed: "Failed to read autostart status",
+		// ③ One-click upgrade (the version row at the bottom of Settings → General)
+		upgradeRowTitle: "DSH host version",
+		upgradeHasNew: "Version {latest} is available — upgrade in one click.",
+		upgradeLoading: "Reading…",
+		upgradeChecking: "Checking…",
+		upgradeRecheck: "Check again",
+		upgradeUnknown: "No version information yet — try \"Check again\".",
+		upgradeUpToDate: "Already up to date.",
+		upgradeRisk: "Only the host is replaced; plugin files are kept. If the new version cannot start because of an incompatible plugin, the guard rolls back automatically.",
+		upgradeAction: "Upgrade and restart",
+		upgradeRunning: "Upgrading…",
+		upgradeRollback: "Roll back to {from}",
+		upgradeConfirmTitle: "Upgrade to {latest}?",
+		upgradeConfirmBody: "The current host is backed up first; the service then restarts to verify the new version. If it cannot start, the guard rolls back automatically. Sessions are briefly interrupted.",
+		upgradeConfirm: "Start upgrade",
+		upgradeTimeout: "The service did not come back in time. Check the log or restart manually.",
+		upgradeStageBackup: "Backing up the host…",
+		upgradeStageInstall: "Installing the new version (this takes a while)…",
+		upgradeStageVerify: "Verifying the new version…",
+		upgradeStageRestart: "Restarting the service…",
+		upgradeStageElapsed: "waited {s}s",
+		upgradeLastDone: "Last upgrade succeeded: {from} → {to}",
+		upgradeLastRolledBack: "Last upgrade was rolled back: {from} → {to}",
+		upgradeLastFailed: "Last upgrade did not finish: {from} → {to}",
+		// ④ Safe mode — shown after the guard removed third-party bundles to boot
+		upgradeSafeModeTitle: "Safe mode is active",
+		upgradeSafeModeStatus: "Safe mode: {count} third-party plugin(s) temporarily disabled.",
+		upgradeSafeModeBody: "The new version failed to start, so the guard removed {count} third-party plugin(s) and booted with the official minimal set. The service works; those plugin features are unavailable for now.",
+		upgradeSafeModeSuspects: "Likely culprit: {list}",
+		upgradeSafeModeAt: "Entered at: {at}",
+		upgradeSafeModeRestore: "Restore plugins",
+		upgradeSafeModeRestoring: "Restoring plugins and restarting…",
+		upgradeSafeModeRestoreTitle: "Restore {count} plugin(s)?",
+		upgradeSafeModeRestoreBody: "They will be added back to the startup list and the service will restart. If any of them is still incompatible the service may fail again — the guard will then re-enter safe mode, so you will not lose the service.",
 	};
 
 	/**
@@ -176,6 +242,11 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		".rstb-btnSolidDanger:hover:not(:disabled){filter:brightness(1.08)}" +
 		".rstb-track{height:4px;border-radius:2px;background:var(--dsw-alias-interactive-bg-hover,#00000014);overflow:hidden}" +
 		".rstb-bar{height:100%;border-radius:2px;background:var(--dsw-alias-button-primary-fill,#4f6ef7);transition:width .3s ease}" +
+		// 不确定进度：备份/安装/校验的真实进度**拿不到**（npm 不吐百分比，宿主也没阶段性回调）。
+		// 与其钉一个假的 30% 让用户以为卡住了，不如老实做「还在动」的扫光 ——
+		// 它要传达的信息只有一条：进程活着。真实信息交给旁边的文字与秒数。
+		".rstb-barBusy{width:34%;animation:rstbSweep 1.15s ease-in-out infinite}" +
+		"@keyframes rstbSweep{0%{transform:translateX(-105%)}100%{transform:translateX(305%)}}" +
 		".rstb-barDone{background:var(--dsw-alias-state-success-primary,#1a7f37)}" +
 		".rstb-error{font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#d1242f)}" +
 		".rstb-overlay{position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;background:#00000061}" +
@@ -199,7 +270,18 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		".rstb-flyoutTime{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8a8a8a);font-variant-numeric:tabular-nums}" +
 		".rstb-flyoutError{font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#d1242f);word-break:break-word}" +
 		".rstb-flyoutClose{flex:none;height:18px;padding:0 4px;border:none;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-tertiary,#8a8a8a);font-size:12px;line-height:18px;cursor:pointer;font-family:inherit}" +
-		".rstb-flyoutClose:hover{background:var(--dsw-alias-interactive-bg-hover,#0000000d)}";
+		".rstb-flyoutClose:hover{background:var(--dsw-alias-interactive-bg-hover,#0000000d)}" +
+		// ── 一键升级（通用页版本行）────────────────────────────────────
+		// 行内的小字说明与右侧按钮组。进度条复用上面的 .rstb-track/.rstb-bar。
+		".rstb-note{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8a8a8a);word-break:break-word}" +
+		".rstb-actions{display:flex;flex:none;align-items:center;gap:8px}" +
+		// 安全模式告警块：这是「你的插件被摘掉了」这种事，必须比普通小字显眼。
+		// 用 warning 色描边 + 浅底，而不是红色：服务是好的，只是功能少了几个。
+		".rstb-safe{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border-radius:6px;border:1px solid var(--dsw-alias-state-warning-primary,#bf8700);background:var(--dsw-alias-state-warning-bg,#bf870014)}" +
+		".rstb-safeTitle{font-size:12px;line-height:18px;font-weight:600;color:var(--dsw-alias-state-warning-primary,#bf8700)}" +
+		".rstb-safeItem{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,inherit);word-break:break-word}" +
+		".rstb-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all}" +
+		".rstb-rowGroup{display:block}";
 
 	/** 注入一次本插件样式（按 tagId 去重，避免重复挂载时叠加）。 */
 	function installStyles() {
@@ -210,6 +292,76 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		tag.dataset.pluginCss = tagId;
 		tag.textContent = CSS;
 		document.head.appendChild(tag);
+	}
+
+	/**
+	 * 等待宿主恢复，并在过程中回报进度 —— 重启与升级共用。
+	 *
+	 * 设计要点（为了「控制台无报错」）：
+	 *  1. 先静默等待 INITIAL_GRACE_MS，跳过「必然失败」的停机窗口 —— 这是
+	 *     减少失败请求、进而消除控制台红字的主要手段。
+	 *  2. 探测用 fetch 而不是靠 setTimeout 猜时间，保证「确实活了」才跳转。
+	 *
+	 * 判据必须同时满足两条（曾经只用 /health 单条，导致跳转撞 401）：
+	 *  a. /dsh-restart-autostart/health 返回 200 + application/json
+	 *     —— 证明新宿主已 bind、且插件行已挂载。
+	 *  b. / 返回 200 或 401 —— 证明宿主根路由与鉴权中间件已就绪。
+	 *     裸访问 / 在无 cookie 时返回 401 + text/plain，这是【鉴权已装好】
+	 *     的正常表现（用户浏览器持有 30 天有效的签名 cookie，会直接 200）；
+	 *     而根路由尚未挂载时返回 404，那才是"还没好"。
+	 *     绝不能笼统判断 status < 500 —— 404 会被误判为就绪。
+	 *
+	 * 提到模块级是为了让「一键升级」复用同一套判据：升级的最后一步也是重启宿主，
+	 * 若两边各写一份，迟早会在某次改动后只修好一边。
+	 *
+	 * @param aliveRef - 组件存活标记的 ref；组件卸载后立即停止探测。
+	 * @param onTick - 每轮回报进度：`{ elapsed, phase }`。
+	 * @returns 服务是否在超时前恢复。
+	 */
+	async function waitForService(aliveRef, onTick) {
+		const startedAt = Date.now();
+		const deadline = startedAt + POLL_TIMEOUT_MS;
+
+		// ① 静默窗口：不探测，只推进进度条。
+		while (Date.now() - startedAt < INITIAL_GRACE_MS) {
+			if (!aliveRef.current) return false;
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			onTick({ elapsed: Date.now() - startedAt, phase: "stopping" });
+		}
+
+		// ② 探测阶段：两条判据都满足才算恢复。
+		let healthReady = false;
+		while (Date.now() < deadline) {
+			if (!aliveRef.current) return false;
+			await new Promise((resolve) => setTimeout(resolve, PROBE_INTERVAL_MS));
+			if (!aliveRef.current) return false;
+			try {
+				if (!healthReady) {
+					const probe = await fetch("/dsh-restart-autostart/health", { cache: "no-store" });
+					// 新进程 bind 之后、插件路由挂载之前，请求会命中宿主兜底
+					// 页（200 + HTML），故必须校验 content-type 而非只看 ok。
+					const type = probe.headers.get("content-type") ?? "";
+					healthReady = probe.ok && type.indexOf("application/json") !== -1;
+				}
+				if (healthReady) {
+					// 再确认宿主根路由已就绪。判定必须精确到状态码：
+					//   200      -> 已有 cookie，直接可用；
+					//   401      -> 鉴权中间件已装好（只是本次请求没带 cookie），
+					//               跳过去时浏览器会带上签名 cookie，正常放行；
+					//   404      -> 根路由【尚未挂载】，此时跳转会看到
+					//               "找不到网页 / HTTP ERROR 404"，必须继续等；
+					//   5xx      -> 服务异常，继续等。
+					const root = await fetch("/", { cache: "no-store", redirect: "manual" });
+					if (root.status < 400 || root.status === 401) return true;
+				}
+			} catch {
+				// 服务尚未恢复 —— 预期路径。浏览器仍会打印一条网络错误，
+				// 已用 grace 把这类日志压到最少。
+				healthReady = false;
+			}
+			onTick({ elapsed: Date.now() - startedAt, phase: "starting" });
+		}
+		return false;
 	}
 
 	/**
@@ -236,71 +388,8 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		const alive = react.useRef(true);
 		react.useEffect(() => () => { alive.current = false; }, []);
 
-		/**
-		 * 等待服务恢复，并在过程中回报进度。
-		 *
-		 * 设计要点（为了「控制台无报错」）：
-		 *  1. 先静默等待 INITIAL_GRACE_MS，跳过「必然失败」的停机窗口 —— 这是
-		 *     减少失败请求、进而消除控制台红字的主要手段。
-		 *  2. 探测用 fetch 而不是靠 setTimeout 猜时间，保证「确实活了」才跳转。
-		 *
-		 * 判据必须同时满足两条（曾经只用 /health 单条，导致跳转撞 401）：
-		 *  a. /dsh-restart-autostart/health 返回 200 + application/json
-		 *     —— 证明新宿主已 bind、且插件行已挂载。
-		 *  b. / 返回 200 或 401 —— 证明宿主根路由与鉴权中间件已就绪。
-		 *     裸访问 / 在无 cookie 时返回 401 + text/plain，这是【鉴权已装好】
-		 *     的正常表现（用户浏览器持有 30 天有效的签名 cookie，会直接 200）；
-		 *     而根路由尚未挂载时返回 404，那才是"还没好"。
-		 *     绝不能笼统判断 status < 500 —— 404 会被误判为就绪。
-		 *
-		 * @param onTick - 每轮回报进度：`{ elapsed, phase }`。
-		 * @returns 服务是否在超时前恢复。
-		 */
-		const waitForRestore = react.useCallback(async (onTick) => {
-			const startedAt = Date.now();
-			const deadline = startedAt + POLL_TIMEOUT_MS;
-
-			// ① 静默窗口：不探测，只推进进度条。
-			while (Date.now() - startedAt < INITIAL_GRACE_MS) {
-				if (!alive.current) return false;
-				await new Promise((resolve) => setTimeout(resolve, 200));
-				onTick({ elapsed: Date.now() - startedAt, phase: "stopping" });
-			}
-
-			// ② 探测阶段：两条判据都满足才算恢复。
-			let healthReady = false;
-			while (Date.now() < deadline) {
-				if (!alive.current) return false;
-				await new Promise((resolve) => setTimeout(resolve, PROBE_INTERVAL_MS));
-				if (!alive.current) return false;
-				try {
-					if (!healthReady) {
-						const probe = await fetch("/dsh-restart-autostart/health", { cache: "no-store" });
-						// 新进程 bind 之后、插件路由挂载之前，请求会命中宿主兜底
-						// 页（200 + HTML），故必须校验 content-type 而非只看 ok。
-						const type = probe.headers.get("content-type") ?? "";
-						healthReady = probe.ok && type.indexOf("application/json") !== -1;
-					}
-					if (healthReady) {
-						// 再确认宿主根路由已就绪。判定必须精确到状态码：
-						//   200      -> 已有 cookie，直接可用；
-						//   401      -> 鉴权中间件已装好（只是本次请求没带 cookie），
-						//               跳过去时浏览器会带上签名 cookie，正常放行；
-						//   404      -> 根路由【尚未挂载】，此时跳转会看到
-						//               "找不到网页 / HTTP ERROR 404"，必须继续等；
-						//   5xx      -> 服务异常，继续等。
-						const root = await fetch("/", { cache: "no-store", redirect: "manual" });
-						if (root.status < 400 || root.status === 401) return true;
-					}
-				} catch {
-					// 服务尚未恢复 —— 预期路径。浏览器仍会打印一条网络错误，
-					// 已用 grace 把这类日志压到最少。
-					healthReady = false;
-				}
-				onTick({ elapsed: Date.now() - startedAt, phase: "starting" });
-			}
-			return false;
-		}, []);
+		// 等待逻辑见模块级的 waitForService：升级流程复用同一套判据。
+		const waitForRestore = react.useCallback((onTick) => waitForService(alive, onTick), []);
 
 		/** 发起重启：POST 端点，然后等待服务恢复并刷新页面。 */
 		const doRestart = react.useCallback(async () => {
@@ -355,6 +444,527 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		}, [t, waitForRestore]);
 
 		return { confirming, setConfirming, restarting, error, phase, elapsed, doRestart };
+	}
+
+	/** 升级过程中轮询状态的间隔（毫秒）。 */
+	const UPGRADE_POLL_MS = 800;
+
+	/**
+	 * 面板「空转轮询」的间隔（毫秒）。
+	 *
+	 * 比 UPGRADE_POLL_MS 粗得多：那条是本页亲手发起升级时的贴身跟踪，慢 0.8s 就会
+	 * 错过重启窗口；这条只是让**旁观中的页面**（刷新过的、或别的页签在升级）跟上服务端，
+	 * 2 秒足够，也不至于让设置页一直发请求。
+	 */
+	const UI_POLL_MS = 2000;
+
+	/** 「上次升级…」这条播报的保鲜期：超过就不再显示（历史在 upgrade.log 里）。 */
+	const LAST_NOTE_TTL_MS = 24 * 60 * 60 * 1000;
+
+	/** 升级全过程的最长等待（毫秒）—— 装 849MB 依赖要几十秒，失败重试也要时间。 */
+	const UPGRADE_DEADLINE_MS = 10 * 60 * 1000;
+
+	/**
+	 * 一键升级的状态与动作 —— 只给值，不管排版。
+	 *
+	 * 流程与阶段完全由服务端主导（见 lib/upgrade/index.js 的状态机），前端只做两件事：
+	 *   1. 轮询 /upgrade/status 把阶段显示出来；
+	 *   2. 察觉到宿主开始重启后，**复用重启用同一套 waitForService** 等待恢复并刷新页面。
+	 *
+	 * 为什么第 2 步不能省：升级的最后一步是重启宿主，那一刻本页会与宿主断开，
+	 * 之后「到底成没成」只能靠 probe —— 而 probe 的判据必须和重启一致，否则会出现
+	 * 「升级成功但页面卡在旧内容」这类假象。
+	 *
+	 * @param t - 文案函数。
+	 * @returns 状态、动作与是否展开面板。
+	 */
+	function useUpgrade(t) {
+		const [state, setState] = react.useState({
+			loading: true,
+			current: null,
+			latest: null,
+			hasUpdate: null,
+			phase: "idle",
+			error: "",
+			busy: false,
+			// 本轮升级的服务端起止时间：用它算「已等待 Ns」，刷新页面也不会从 0 重来。
+			startedAt: null,
+			last: null,
+			pending: null,
+			// 安全模式状态：非 null 表示 guard 在「新版本起不来」时把第三方 bundle 摘掉了。
+			// 它由 guard 写盘、由本页解除，是唯一一条「用户看不见就必须靠猜」的状态。
+			safeMode: null,
+		});
+		const [checking, setChecking] = react.useState(false);
+		const [failure, setFailure] = react.useState("");
+		const [busyUi, setBusyUi] = react.useState(false);
+		const [elapsed, setElapsed] = react.useState(0);
+		const [waitPhase, setWaitPhase] = react.useState("");
+		const alive = react.useRef(true);
+		react.useEffect(() => () => { alive.current = false; }, []);
+		// 上一次看到的宿主版本 —— 用来识别「宿主已经换了版本」，见 merge 里的说明。
+		const seenVersion = react.useRef(null);
+
+		/** 把服务端返回的状态合并进本地 state。 */
+		const merge = react.useCallback((data) => {
+			if (!alive.current) return;
+			const phase = typeof data.phase === "string" ? data.phase : "idle";
+			const busy = data.busy === true;
+			const nextCurrent = typeof data.current === "string" ? data.current : null;
+			setState({
+				loading: false,
+				current: nextCurrent,
+				latest: typeof data.latest === "string" ? data.latest : null,
+				hasUpdate: data.hasUpdate === true ? true : data.hasUpdate === false ? false : null,
+				phase,
+				error: typeof data.error === "string" ? data.error : "",
+				busy,
+				startedAt: typeof data.startedAt === "number" && data.startedAt > 0 ? data.startedAt : null,
+				last: data.last ?? null,
+				pending: data.pending ?? null,
+				safeMode: data.safeMode !== null && typeof data.safeMode === "object" ? data.safeMode : null,
+			});
+			// 服务端已到终态时，本地那个「我这一页点过升级」的 busyUi 必须让位。
+			// 它只是本页签的乐观状态，管不了「另一个页签发起的升级已经结束」—— 不清它，
+			// 面板就会永远停在「升级中…」，而服务端其实早已收工（实测踩到过）。
+			if (!busy && (phase === "done" || phase === "failed" || phase === "rolled-back")) {
+				setBusyUi(false);
+				setWaitPhase("");
+			}
+			// 但升级**成功**的情形靠上面这条抓不住：重启后是**全新宿主进程**，
+			// 它的内存状态机从 idle 开始（`last` 才是 done），phase 永远不会经过 done。
+			// 于是「宿主版本变了」才是升级成功的唯一外部证据 —— 本页看着 rc.2 变 rc.3，
+			// 就说明那次升级已经有结论，本地的「升级中」必须作废。
+			if (seenVersion.current !== null && nextCurrent !== null && nextCurrent !== seenVersion.current) {
+				setBusyUi(false);
+				setWaitPhase("");
+			}
+			seenVersion.current = nextCurrent;
+		}, []);
+
+		const refresh = react.useCallback(async () => {
+			try {
+				const response = await fetch("/dsh-restart-autostart/upgrade/status", { cache: "no-store" });
+				if (!response.ok) throw new Error("HTTP " + response.status);
+				merge(await response.json());
+			} catch {
+				// 宿主可能正在重启：保留现有状态，别把面板清空。
+				if (alive.current) setState((prev) => ({ ...prev, loading: false }));
+			}
+		}, [merge]);
+
+		react.useEffect(() => { void refresh(); }, [refresh]);
+
+		// 升级进行中时持续轮询。
+		//
+		// 只查一次（挂载时）会造成一个很具体的假象：升级是**在别处**发生的
+		// （另一个页签、或本页在安装途中被手动刷新），这一页之后再没有任何事件能唤醒它，
+		// 于是「服务端早就装完并验证通过，面板还停在正在安装新版本…」—— 用户只能靠
+		// 反复手动刷新自救。这里补上「只要还在忙就每 2 秒看一眼」。
+		//
+		// 上限沿用 UPGRADE_DEADLINE_MS：宿主真的挂了的话，无限轮询只会白烧电池，
+		// 而「宿主挂了」自有 guard 与 waitForService 负责，不归这个轮询管。
+		react.useEffect(() => {
+			if (!state.busy) return undefined;
+			const deadline = Date.now() + UPGRADE_DEADLINE_MS;
+			const timer = setInterval(() => {
+				if (Date.now() > deadline) {
+					clearInterval(timer);
+					return;
+				}
+				void refresh();
+			}, UI_POLL_MS);
+			return () => clearInterval(timer);
+		}, [state.busy, refresh]);
+
+		/** 手动检查更新（强制联网，绕开 6 小时缓存）。 */
+		const checkNow = react.useCallback(async () => {
+			setChecking(true);
+			setFailure("");
+			try {
+				const response = await fetch("/dsh-restart-autostart/upgrade/check", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+				});
+				const data = await response.json().catch(() => ({}));
+				if (data.status) merge(data.status);
+				if (data.ok === false) setFailure(data.error || ("HTTP " + response.status));
+			} catch (err) {
+				if (alive.current) setFailure(String(err && err.message ? err.message : err));
+			} finally {
+				if (alive.current) setChecking(false);
+			}
+		}, [merge]);
+
+		/** 发起升级，然后盯到宿主重启并恢复。 */
+		const start = react.useCallback(async () => {
+			setFailure("");
+			setElapsed(0);
+			setWaitPhase("");
+			setBusyUi(true);
+			try {
+				const response = await fetch("/dsh-restart-autostart/upgrade/start", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: "{}",
+				});
+				const data = await response.json().catch(() => ({}));
+				if (data.status) merge(data.status);
+				if (!response.ok || data.ok === false) {
+					if (alive.current) {
+						setBusyUi(false);
+						setFailure(data.error || ("HTTP " + response.status));
+					}
+					return;
+				}
+			} catch (err) {
+				if (alive.current) {
+					setBusyUi(false);
+					setFailure(String(err && err.message ? err.message : err));
+				}
+				return;
+			}
+
+			// ① 盯阶段：备份 → 安装 → 校验 → 重启中。
+			const deadline = Date.now() + UPGRADE_DEADLINE_MS;
+			let leaving = false;
+			while (Date.now() < deadline && alive.current) {
+				await new Promise((resolve) => setTimeout(resolve, UPGRADE_POLL_MS));
+				if (!alive.current) return;
+				let data = null;
+				try {
+					const response = await fetch("/dsh-restart-autostart/upgrade/status", { cache: "no-store" });
+					if (response.ok) data = await response.json();
+				} catch {
+					// 宿主已经在下线：立刻转入等待恢复，别继续打卡。
+				}
+				if (data === null || data.phase === "restarting") { leaving = true; break; }
+				merge(data);
+				if (data.phase === "failed" || data.phase === "rolled-back") {
+					// 失败时宿主还活着（根本没重启），停在这里把原因显示出来。
+					if (alive.current) setBusyUi(false);
+					return;
+				}
+			}
+			if (!leaving) {
+				if (alive.current) {
+					setBusyUi(false);
+					setFailure(t("upgradeTimeout"));
+				}
+				return;
+			}
+
+			// ② 等新宿主回来 —— 与重启完全相同的判据。
+			let lastPaint = 0;
+			const restored = await waitForService(alive, (tick) => {
+				const now = Date.now();
+				if (now - lastPaint < 100) return;
+				lastPaint = now;
+				if (!alive.current) return;
+				setElapsed(tick.elapsed);
+				setWaitPhase(tick.phase);
+			});
+			if (!alive.current) return;
+			if (restored) {
+				// 用 replace("/") 而不是 reload()：地址栏里那条 URL 带的是旧进程的
+				// ?token=，新进程必定拒绝（详见 useRestart 里的同一处说明）。
+				window.location.replace("/");
+				return;
+			}
+			setBusyUi(false);
+			setFailure(t("upgradeTimeout"));
+		}, [merge, t]);
+
+		/** 回滚到上次升级前的版本。 */
+		const rollback = react.useCallback(async () => {
+			setFailure("");
+			setBusyUi(true);
+			try {
+				const response = await fetch("/dsh-restart-autostart/upgrade/rollback", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+				});
+				const data = await response.json().catch(() => ({}));
+				if (data.status) merge(data.status);
+				if (!response.ok || data.ok === false) {
+					setFailure(data.error || data.detail || ("HTTP " + response.status));
+					return;
+				}
+				// 回滚只换文件，进程还是旧的 → 必须重启才生效。
+				await fetch("/dsh-restart-autostart/restart", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+				}).catch(() => {});
+				let lastPaint = 0;
+				const restored = await waitForService(alive, (tick) => {
+					const now = Date.now();
+					if (now - lastPaint < 100) return;
+					lastPaint = now;
+					if (!alive.current) return;
+					setElapsed(tick.elapsed);
+					setWaitPhase(tick.phase);
+				});
+				if (restored && alive.current) window.location.replace("/");
+			} catch (err) {
+				if (alive.current) setFailure(String(err && err.message ? err.message : err));
+			} finally {
+				if (alive.current) setBusyUi(false);
+			}
+		}, [merge]);
+
+		/**
+		 * 退出安全模式：把被隔离的第三方插件装回去。
+		 *
+		 * 路由本身会顺手重启（恢复 bundles 只有重启才生效），所以这里只做两件事：
+		 * 发请求、盯服务回来。**不额外调 /restart** —— 那会触发第二次重启，
+		 * 而且第二发的宿主可能刚好落在第一发刚恢复的窗口里，徒增竞态。
+		 *
+		 * @returns Promise，始终 resolve；失败写进 failure。
+		 */
+		const clearSafe = react.useCallback(async () => {
+			setFailure("");
+			setBusyUi(true);
+			try {
+				const response = await fetch("/dsh-restart-autostart/upgrade/safe-mode/clear", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: "{}",
+				});
+				const data = await response.json().catch(() => ({}));
+				if (data.status) merge(data.status);
+				if (!response.ok || data.ok === false) {
+					setFailure(data.detail || data.error || ("HTTP " + response.status));
+					return;
+				}
+				if (data.restarting !== true) return;
+				let lastPaint = 0;
+				const restored = await waitForService(alive, (tick) => {
+					const now = Date.now();
+					if (now - lastPaint < 100) return;
+					lastPaint = now;
+					if (!alive.current) return;
+					setElapsed(tick.elapsed);
+					setWaitPhase(tick.phase);
+				});
+				if (restored && alive.current) window.location.replace("/");
+			} catch (err) {
+				if (alive.current) setFailure(String(err && err.message ? err.message : err));
+			} finally {
+				if (alive.current) setBusyUi(false);
+			}
+		}, [merge]);
+
+		return { ...state, checking, failure, busyUi, elapsed, waitPhase, refresh, checkNow, start, rollback, clearSafe };
+	}
+
+	/**
+	 * 「DSH 主程序版本」设置行 —— 放在「设置 → 通用」的最下面。
+	 *
+	 * 位置动机：通用页底部本来就有「当前版本 x.y.z」，升级入口贴着版本号放，两件事
+	 * 在语义上是一回事；标题栏也不再挤第三个按钮（那里只留「重启」）。
+	 * order 取 10000，确保落在平台那行版本信息之后。
+	 *
+	 * 进度**内联**在这一行下方，不用浮层：通用页是纵向流式布局，行可以自然长高；
+	 * 而浮层贴在标题栏下沿时会被滚动容器裁掉。更关键的是——点下去必须**立刻**有可见
+	 * 变化（按钮变成「升级中…」＋出现进度条），否则会有「点了没反应」的错觉。
+	 * @param props - 插槽 props：`t` 文案函数。
+	 * @returns 行元素树（升级确认弹窗也挂在这里）。
+	 */
+	function UpdateRow({ t }) {
+		const u = useUpgrade(t);
+		// 弹窗类型："" 关着，"upgrade" 升级确认，"restore" 恢复插件确认。
+		// 两者共用同一个遮罩，但文案与后果完全不同，不能合并成一个「确定」。
+		const [confirming, setConfirming] = react.useState("");
+		// 秒级心跳：只用于刷新「已等待 Ns」，不参与任何判断。
+		const [nowTick, setNowTick] = react.useState(Date.now());
+
+		// 安全模式：宿主是被 guard 用官方最小 bundle 拉起来的，第三方插件暂不在场。
+		const safe = u.safeMode;
+		const inSafe = safe !== null && typeof safe === "object";
+		const removed = inSafe && Array.isArray(safe.removed) ? safe.removed : [];
+		const suspects = inSafe && Array.isArray(safe.suspects) ? safe.suspects : [];
+
+		// 升级中：按钮禁用并显示当前阶段，避免重复点击。
+		const running = u.busyUi || u.busy;
+		const restoring = inSafe && u.busyUi;
+		const stageKey = restoring ? "upgradeSafeModeRestoring"
+			: running
+				? (u.phase === "install" ? "upgradeStageInstall"
+					: u.phase === "verify" ? "upgradeStageVerify"
+						// phase 仍是 idle 却在忙 ⇒ 本页刚点了恢复插件 / 回滚，正在等宿主重启。
+						: u.phase === "restarting" || u.waitPhase !== "" || (u.busyUi && u.phase === "idle")
+							? "upgradeStageRestart"
+							: "upgradeStageBackup")
+				: "";
+
+		// 升级期间的 1s 心跳。只有升级中才挂，避免设置页空转重渲染。
+		// 顺带记下「本页何时看到忙碌开始」—— 恢复插件、回滚重启这两条路径不经过
+		// 服务端状态机（phase 仍是 idle），拿不到 startedAt，只能本地起算。
+		const localStart = react.useRef(0);
+		react.useEffect(() => {
+			if (!running) { localStart.current = 0; return undefined; }
+			if (localStart.current === 0) localStart.current = Date.now();
+			const timer = setInterval(() => setNowTick(Date.now()), 1000);
+			return () => clearInterval(timer);
+		}, [running]);
+
+		// 「已等待 Ns」：优先用**服务端记录的起点**，所以中途刷新页面也不会从 0 重来；
+		// 只在服务端确实在跑升级流程时采信它（否则那份时间戳可能是几小时前那次升级的）。
+		const serverActive = u.phase === "backup" || u.phase === "install"
+			|| u.phase === "verify" || u.phase === "restarting";
+		const stageBase = running
+			? (serverActive && typeof u.startedAt === "number" && u.startedAt > 0 ? u.startedAt : localStart.current)
+			: 0;
+		const stageSeconds = stageBase > 0 ? Math.max(0, Math.round((nowTick - stageBase) / 1000)) : 0;
+
+		// 第二行：**一行说清状态**。三种「没有新版」的成因必须分开说，否则
+		// 「还没查过」会被误读成「已是最新」；升级中则把阶段与秒数并进同一行 ——
+		// 以前阶段文案在状态行和进度条下面各印一遍，是纯粹的重复。
+		const statusText = running
+			? (stageSeconds > 0
+				? t(stageKey) + " · " + t("upgradeStageElapsed").replace("{s}", String(stageSeconds))
+				: t(stageKey))
+			: inSafe ? t("upgradeSafeModeStatus").replace("{count}", String(removed.length))
+				: u.loading ? t("upgradeLoading")
+					: u.checking ? t("upgradeChecking")
+						: u.hasUpdate === true ? t("upgradeHasNew").replace("{latest}", u.latest ?? "?")
+							: u.hasUpdate === false ? t("upgradeUpToDate")
+								: t("upgradeUnknown");
+
+		// 右侧动作：安全模式下只给「恢复插件」（+ 回滚 dsh）；否则按有无新版给升级/检查。
+		const hasRollbackTarget = !running && u.last !== null && typeof u.last === "object"
+			&& u.last.phase === "done" && typeof u.last.from === "string" && u.last.from !== "";
+		const action = inSafe
+			? { label: t("upgradeSafeModeRestore"), kind: "solid", disabled: running, onClick: () => { setConfirming("restore"); } }
+			: u.hasUpdate === true
+				? { label: t("upgradeAction"), kind: "solid", disabled: running, onClick: () => { setConfirming("upgrade"); } }
+				: { label: u.checking ? t("upgradeChecking") : t("upgradeRecheck"), kind: "ghost", disabled: u.checking || running, onClick: () => { void u.checkNow(); } };
+
+		const buttons = [
+			hasRollbackTarget
+				? react.createElement("button", {
+					key: "rollback",
+					type: "button",
+					className: "rstb-btn rstb-btnGhost",
+					onClick: () => { void u.rollback(); },
+				}, t("upgradeRollback").replace("{from}", u.last.from))
+				: null,
+			react.createElement("button", {
+				key: "action",
+				type: "button",
+				className: "rstb-btn" + (action.kind === "ghost" ? " rstb-btnGhost" : ""),
+				disabled: action.disabled,
+				onClick: action.onClick,
+			}, running ? t(restoring ? "upgradeSafeModeRestoring" : "upgradeRunning") : action.label),
+		].filter((child) => child !== null);
+
+		const message = u.failure !== "" ? u.failure : (u.error !== "" ? u.error : "");
+
+		const body = [
+			react.createElement("div", { className: "rstb-head", key: "head" }, [
+				react.createElement("div", { className: "rstb-rowText", key: "text" }, [
+					react.createElement("div", { className: "rstb-title", key: "title" }, t("upgradeRowTitle")),
+					// 版本号**不在这里重复**：平台就在这一行的正上方显示「当前版本：x.y.z」。
+					// 以前又印一遍「当前版本 x.y.z」，紧挨着的两行同样的字，看着像渲染错了。
+					react.createElement("div", { className: "rstb-note", key: "status" }, statusText),
+				]),
+				react.createElement("div", { className: "rstb-actions", key: "actions" }, buttons),
+			]),
+		];
+
+		// 安全模式告警：必须说清「服务是好的、插件被摘了、谁可疑」三件事。
+		// 缺任何一件，用户都会以为是自己手滑删了插件。
+		if (inSafe) {
+			const items = [
+				react.createElement("div", { className: "rstb-safeItem", key: "why" },
+					t("upgradeSafeModeBody").replace("{count}", String(removed.length))),
+			];
+			if (removed.length > 0) {
+				items.push(react.createElement("div", { className: "rstb-safeItem rstb-code", key: "removed" },
+					removed.join("、")));
+			}
+			if (suspects.length > 0) {
+				items.push(react.createElement("div", { className: "rstb-safeItem", key: "sus" },
+					t("upgradeSafeModeSuspects").replace("{list}", suspects.join("、"))));
+			}
+			if (typeof safe.at === "string" && safe.at !== "") {
+				items.push(react.createElement("div", { className: "rstb-note", key: "at" },
+					t("upgradeSafeModeAt").replace("{at}", safe.at)));
+			}
+			body.push(react.createElement("div", { className: "rstb-safe", key: "safe" }, [
+				react.createElement("div", { className: "rstb-safeTitle", key: "t" }, t("upgradeSafeModeTitle")),
+				...items,
+			]));
+		}
+
+		if (running) {
+			// 只留一条**扫光**进度条，不再在它下面重复印一遍阶段文案 —— 阶段已经并进
+			// 上面那行状态了。不确定进度就不能画成一个钉住的固定百分比（以前是 30%），
+			// 那条静止的黑条看上去就是「卡死了」。
+			body.push(react.createElement("div", { className: "rstb-track", key: "track" },
+				react.createElement("div", { className: "rstb-bar rstb-barBusy" })));
+		}
+
+		if (!running && !inSafe && u.hasUpdate === true) {
+			body.push(react.createElement("div", { className: "rstb-note", key: "risk" }, t("upgradeRisk")));
+		}
+
+		// 上次升级的结果：重启之后内存状态全丢，只有这份落盘记录能回答「刚才成没成」。
+		//
+		// 但只播报**一天内**的事，否则这条提示会永久占据面板：一周后它既不是新闻，
+		// 也没法据此做任何决定（真要回滚，右侧按钮已经写着「回滚到 x.y.z」）。
+		// 历史留在 logs/upgrade.log 里，需要时能查。
+		const lastAt = !running && u.last !== null && typeof u.last === "object"
+			&& typeof u.last.at === "string" ? Date.parse(u.last.at) : NaN;
+		const lastFresh = Number.isFinite(lastAt) && nowTick - lastAt < LAST_NOTE_TTL_MS;
+		if (lastFresh) {
+			const kind = u.last.phase === "done" ? "upgradeLastDone"
+				: u.last.phase === "rolled-back" ? "upgradeLastRolledBack"
+					: u.last.phase === "failed" ? "upgradeLastFailed" : "";
+			if (kind !== "") {
+				body.push(react.createElement("div", { className: "rstb-note", key: "last" },
+					t(kind).replace("{from}", u.last.from ?? "?").replace("{to}", u.last.to ?? "?")));
+			}
+		}
+
+		if (message !== "") {
+			body.push(react.createElement("div", { className: "rstb-error", key: "err" }, message));
+		}
+
+		const node = react.createElement("div", { className: "rstb-row" }, body);
+
+		if (confirming === "") return node;
+		const isRestore = confirming === "restore";
+		return react.createElement("div", { className: "rstb-rowGroup" }, [
+			node,
+			react.createElement("div", { className: "rstb-overlay", key: "overlay" },
+				react.createElement("div", { className: "rstb-modal" }, [
+					react.createElement("div", { className: "rstb-modalTitle", key: "mt" },
+						isRestore
+							? t("upgradeSafeModeRestoreTitle").replace("{count}", String(removed.length))
+							: t("upgradeConfirmTitle").replace("{latest}", u.latest ?? "?")),
+					react.createElement("div", { className: "rstb-modalBody", key: "mb" },
+						isRestore ? t("upgradeSafeModeRestoreBody") : t("upgradeConfirmBody")),
+					react.createElement("div", { className: "rstb-modalActions", key: "ma" }, [
+						react.createElement("button", {
+							key: "cancel",
+							type: "button",
+							className: "rstb-btn rstb-btnGhost",
+							onClick: () => { setConfirming(""); },
+						}, t("cancel")),
+						react.createElement("button", {
+							key: "ok",
+							type: "button",
+							className: "rstb-btn",
+							onClick: () => {
+								setConfirming("");
+								if (isRestore) void u.clearSafe();
+								else void u.start();
+							},
+						}, isRestore ? t("upgradeSafeModeRestore") : t("upgradeConfirm")),
+					]),
+				]))
+		]);
 	}
 
 	/**
@@ -632,11 +1242,11 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 	}
 
 	/**
-	 * 客户端插件入口：注册中英文字典，并挂两处渲染点。
+	 * 客户端插件入口：注册中英文字典，并挂三处渲染点。
 	 *
-	 * 两处各注册一次、互不依赖：标题栏按钮（重启）与通用页行（自启）。
-	 * 之所以拆开，是因为重启要从「通用页深处」搬到「全局标题栏」；
-	 * 而自启开关属于系统配置，留在通用页更自然。
+	 * 三处各注册一次、互不依赖：标题栏「更新」、标题栏「重启」、通用页「自启」行。
+	 * 标题栏两项用 order 拉开顺序（-20 在 -10 左侧），都要落在官方
+	 * 「打开配置文件」(order 0) 之前。
 	 * @param ctx - cordis 客户端上下文。
 	 */
 	function apply(ctx) {
@@ -644,7 +1254,7 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 		ctx.effect(() => ctx.locale.register(NS, { zh, en }), NS + ": dictionaries");
 		const t = ctx.locale.bind(NS);
 
-		// ① 设置面板标题栏（所有分页共用）：order 为负，落在官方「打开配置文件」(order 0) 左侧。
+		// ① 重启：设置面板标题栏（所有分页共用），落在官方「打开配置文件」(order 0) 左侧。
 		ctx.slots.inject("settings.action", () => ctx.slots.register({
 			name: "settings.action",
 			id: NS + "/restart",
@@ -653,7 +1263,17 @@ window.__ModuleLoader__.load({ id: "dsh-restart-autostart", factory: (require) =
 			inject: () => ({ t })
 		}, HeaderRestart));
 
-		// ② 「语言」(0)、「外观」(10/11) 之后就是自启这一行。
+		// ② 「语言」(0)、「外观」(10/11)、自启(90) 之后就是平台的版本行；
+		// 升级入口贴着版本号放在最下面（order 10000 确保排在版本行之后）。
+		ctx.slots.inject("settings.general.item", () => ctx.slots.register({
+			name: "settings.general.item",
+			id: NS + "/upgrade",
+			order: 10000,
+			locale: NS,
+			inject: () => ({ t })
+		}, UpdateRow));
+
+		// ③ 自启开关：留在「设置 → 通用」，属于系统配置。
 		ctx.slots.inject("settings.general.item", () => ctx.slots.register({
 			name: "settings.general.item",
 			id: NS + "/autostart",
